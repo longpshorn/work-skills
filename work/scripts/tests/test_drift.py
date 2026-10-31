@@ -127,3 +127,8 @@ def test_git_timeout_is_reported_not_hung(store, write, tmp_path, capsys, monkey
     monkeypatch.setattr(work.subprocess, "run", hang)
     write("p/01-a", header(repos=f"[{slow}]"))
     assert f"  {slow}: git timed out\n" in drift(capsys, "p/01-a")[1]
+
+
+def test_windows_drive_paths_are_linked_paths():
+    text = "Notes in C:\\Users\\me\\notes.md and `D:/work/plan.md`, see ~/a.md"
+    assert [m.group(1) for m in work.LINK.finditer(text)] == ["C:\\Users\\me\\notes.md", "D:/work/plan.md", "~/a.md"]

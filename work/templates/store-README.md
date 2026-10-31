@@ -20,7 +20,7 @@ Private working notes for every tracked workstream on this machine. Local git on
     report: false         # optional; default true. false = one-off work kept out of status reports
     ---
 
-Rules: lists are `[a, b]`; an inline comment needs two or more spaces before `#`; paths in the body must be absolute (`~/...`) and space-free for drift to see them; Log lines are `- YYYY-MM-DD · <fact>`, newest last.
+Rules: lists are `[a, b]`; an inline comment needs two or more spaces before `#`; paths in the body must be absolute (`~/...`, or `C:\...` on Windows) and space-free for drift to see them; Log lines are `- YYYY-MM-DD · <fact>`, newest last.
 
 ## Tools
 

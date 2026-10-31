@@ -29,7 +29,7 @@ def test_exact_key(store, three, capsys):
 
 def test_area_with_single_workstream(store, three, capsys):
     rc, out = run(capsys, "find", "garden")
-    assert rc == 0 and out.out.strip().endswith("garden/01-raised-beds.md")
+    assert rc == 0 and out.out.strip() == str(store / "garden" / "01-raised-beds.md")
 
 
 def test_substring_on_key_or_title_is_case_insensitive(store, three, capsys):
@@ -53,9 +53,10 @@ def test_no_match(store, three, capsys):
 
 def test_cwd_inside_linked_repo(store, three, capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     rc, out = run(capsys, "find", "--cwd",
                   str(tmp_path / "code/acme/garden-planner/src"))
-    assert rc == 0 and out.out.strip().endswith("garden/01-raised-beds.md")
+    assert rc == 0 and out.out.strip() == str(store / "garden" / "01-raised-beds.md")
 
 
 def test_cwd_outside_any_repo(store, three, capsys, tmp_path):

@@ -146,7 +146,7 @@ def render_index(root, items, errors, today):
         out.append("")
     if errors:
         out += ["## Errors", ""]
-        out += [f"- `{path.relative_to(root)}`: {msg}" for path, msg in errors]
+        out += [f"- `{path.relative_to(root).as_posix()}`: {msg}" for path, msg in errors]
         out.append("")
     return "\n".join(out)
 
@@ -155,7 +155,7 @@ def cmd_index(root, args):
     items, errors = load_store(root)
     (root / "INDEX.md").write_text(render_index(root, items, errors, args.today), encoding="utf-8")
     for path, msg in errors:
-        print(f"{path.relative_to(root)}: {msg}", file=sys.stderr)
+        print(f"{path.relative_to(root).as_posix()}: {msg}", file=sys.stderr)
     return 1 if errors else 0
 
 
@@ -199,7 +199,7 @@ def cmd_find(root, args):
     return 3
 
 
-LINK = re.compile(r"(?:(?<=[`(\s])|^)(~?/[^\s`)\]>\"']+)", re.M)
+LINK = re.compile(r"(?:(?<=[`(\s])|^)((?:~?/|[A-Za-z]:[\\/])[^\s`)\]>\"']+)", re.M)
 
 
 def vm_root():
