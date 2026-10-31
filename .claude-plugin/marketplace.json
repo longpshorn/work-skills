@@ -1,0 +1,14 @@
+{
+  "name": "work-skills",
+  "description": "Claude Code skills for tracking workstreams across sessions",
+  "owner": {
+    "name": "Patrick Smith"
+  },
+  "plugins": [
+    {
+      "name": "work",
+      "description": "Work-session skills: /work:new, /work:resume, /work:checkpoint, /work:wrap, /work:standup",
+      "source": "./work"
+    }
+  ]
+}

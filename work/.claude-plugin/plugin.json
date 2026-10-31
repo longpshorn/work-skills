@@ -1,0 +1,9 @@
+{
+  "name": "work",
+  "description": "Track workstreams across Claude Code sessions in a private, per-machine store: start, resume, checkpoint, wrap up and review every workstream at a glance",
+  "author": {
+    "name": "Patrick Smith"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/longpshorn/work-skills"
+}
