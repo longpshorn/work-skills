@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -285,17 +286,37 @@ def cmd_drift(root, args):
 TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "store-README.md"
 
 
+def enclosing_repo(path):
+    """The git work tree holding PATH (or its nearest existing parent), or None."""
+    probe = path
+    while not probe.exists():
+        probe = probe.parent
+    rc, out = git(probe, "rev-parse", "--show-toplevel")
+    return out.strip() if rc == 0 else None
+
+
 def cmd_init(root):
-    if root.is_dir():
+    if root.exists() and not root.is_dir():
+        print(f"work.py: {root} is a file, not a folder; nothing changed", file=sys.stderr)
+        return 5
+    if (root / ".git").exists():
         print(f"work.py: a work store already exists at {root}; nothing changed", file=sys.stderr)
         print(root)
         return 0
-    if root.exists():
-        print(f"work.py: {root} is a file, not a folder; nothing changed", file=sys.stderr)
+    if not shutil.which("git"):
+        print("work.py: git is not installed or not on PATH; install it, then run init again", file=sys.stderr)
         return 5
-    root.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", "-b", "log", str(root)], check=True, capture_output=True)
-    (root / "README.md").write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+    outer = enclosing_repo(root)
+    if outer:
+        print(f"work.py: {root} is inside the git repo {outer}; the store needs its own history, "
+              "so choose a folder outside any repo", file=sys.stderr)
+        return 5
+    root.mkdir(parents=True, exist_ok=True)
+    git(root, "init", "-q")
+    git(root, "symbolic-ref", "HEAD", "refs/heads/log")
+    readme = root / "README.md"
+    if not readme.exists():
+        readme.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
     git(root, "add", "-A")
     rc, _ = git(root, "-c", "user.useConfigOnly=true", "commit", "-q", "-m", "init: work store")
     if rc:
@@ -336,6 +357,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.cmd == "nudge":
         return cmd_nudge()
+    raw = os.environ.get("WORK_STORE")
+    if raw and not os.path.isabs(os.path.expanduser(raw)):
+        print(f"work.py: WORK_STORE must be an absolute path (or start with ~), not {raw!r}", file=sys.stderr)
+        return 4
     root = store_root()
     if args.cmd == "root":
         print(root)

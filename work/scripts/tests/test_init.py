@@ -84,3 +84,42 @@ def test_index_and_find_work_after_init(fresh, monkeypatch, capsys):
     init(capsys)
     assert work.main(["index"]) == 0
     assert work.main(["find", "anything"]) == 3
+
+
+def test_init_turns_an_empty_folder_into_a_store(fresh, monkeypatch, capsys):
+    for key, value in IDENTITY.items():
+        monkeypatch.setenv(key, value)
+    fresh.mkdir()
+    rc, _ = init(capsys)
+    assert rc == 0
+    assert git_out(fresh, "branch", "--show-current") == "log"
+    assert (fresh / "README.md").is_file()
+    assert git_out(fresh, "log", "--format=%s") == "init: work store"
+
+
+def test_init_keeps_files_already_in_a_folder_without_git(fresh, monkeypatch, capsys):
+    for key, value in IDENTITY.items():
+        monkeypatch.setenv(key, value)
+    fresh.mkdir()
+    (fresh / "README.md").write_text("mine\n", encoding="utf-8")
+    assert init(capsys)[0] == 0
+    assert (fresh / "README.md").read_text(encoding="utf-8") == "mine\n"
+    assert git_out(fresh, "branch", "--show-current") == "log"
+
+
+def test_init_refuses_a_folder_inside_another_repo(tmp_path, monkeypatch, capsys):
+    outer = tmp_path / "outer"
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    store = outer / "notes"
+    store.mkdir()
+    monkeypatch.setenv("WORK_STORE", str(store))
+    rc, out = init(capsys)
+    assert rc == 5 and "inside the git repo" in out.err
+    assert not (store / ".git").exists() and not (store / "README.md").exists()
+
+
+def test_init_without_git_says_so_and_creates_nothing(fresh, monkeypatch, capsys):
+    monkeypatch.setenv("PATH", "")
+    rc, out = init(capsys)
+    assert rc == 5 and "git" in out.err
+    assert not fresh.exists()

@@ -21,14 +21,21 @@ def test_default_store_is_dot_work(tmp_path, monkeypatch, capsys):
     assert run_root(capsys) == (0, str(tmp_path / ".work"))
 
 
-def test_root_expands_tilde_and_relative(tmp_path, monkeypatch, capsys):
+def test_root_expands_tilde(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("WORK_STORE", "~/notes")
     assert run_root(capsys) == (0, str(tmp_path / "notes"))
+
+
+def test_relative_work_store_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("WORK_STORE", "rel")
-    assert run_root(capsys) == (0, str(tmp_path / "rel"))
+    rc = work.main(["root"])
+    err = capsys.readouterr().err
+    assert rc == 4 and "must be an absolute path" in err
+    assert work.main(["init"]) == 4
+    assert not (tmp_path / "rel").exists()
 
 
 def test_root_works_without_a_store(tmp_path, monkeypatch, capsys):
