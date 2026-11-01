@@ -7,7 +7,7 @@ from helpers import header
 def test_index_groups_by_area_and_flags_stale(store, write):
     write("garden/01-a", header(title="Alpha", updated="2026-09-01"))
     write("ai/01-b", header(title="Beta", next="x | y"))
-    write("ai/02-c", header(title="Done one", status="done", updated="2026-01-01"))
+    write("ai/02-c", header(title="Done one", state="done", updated="2026-01-01"))
     assert work.main(["--today", "2026-10-05", "index"]) == 0
     text = (store / "INDEX.md").read_text(encoding="utf-8")
     assert text.startswith("# Work Index\n")
@@ -20,16 +20,16 @@ def test_index_groups_by_area_and_flags_stale(store, write):
 
 def test_index_reports_errors_and_exits_1(store, write, capsys):
     write("ai/01-b", header())
-    write("ai/02-bad", header(status="doing"))
+    write("ai/02-bad", header(state="doing"))
     assert work.main(["index"]) == 1
     text = (store / "INDEX.md").read_text(encoding="utf-8")
     assert "## Errors" in text
-    assert "- `ai/02-bad.md`: bad status 'doing'" in text
-    assert "ai/02-bad.md: bad status 'doing'" in capsys.readouterr().err
+    assert "- `ai/02-bad.md`: bad state 'doing'" in text
+    assert "ai/02-bad.md: bad state 'doing'" in capsys.readouterr().err
 
 
 def test_list_prints_one_line_each(store, write, capsys):
-    write("ai/01-b", header(status="blocked", next="Wait for data"))
+    write("ai/01-b", header(state="blocked", next="Wait for data"))
     write("ai/02-c", header(next="Ship"))
     assert work.main(["list"]) == 0
     assert capsys.readouterr().out == "ai/01-b · blocked · Wait for data\nai/02-c · active · Ship\n"
@@ -67,7 +67,7 @@ def test_index_links_encode_markdown_specials_in_target_only(store, write):
 
 
 def row_for(tmp_path, area, filename, title="T"):
-    meta = {"title": title, "status": "active", "next": "Do it",
+    meta = {"title": title, "state": "active", "next": "Do it",
             "updated": dt.date(2026, 10, 1), "report": True}
     item = work.Workstream(area, tmp_path / area / filename, meta)
     text = work.render_index(tmp_path, [item], [], dt.date(2026, 10, 5))

@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-STATUSES = ("idea", "scoped", "active", "blocked", "review", "done")
-REQUIRED = ("title", "status", "next", "updated")
+STATES = ("idea", "scoped", "active", "blocked", "review", "done")
+REQUIRED = ("title", "state", "next", "updated")
+TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 STALE_DAYS = 14
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
@@ -87,11 +88,15 @@ def parse_header(text):
             meta[key] = [unquote(v.strip()) for v in value[1:-1].split(",") if v.strip()]
         else:
             meta[key] = unquote(value)
+    if "state" not in meta and meta.get("status") in STATES:
+        meta["state"] = meta.pop("status")
     missing = [k for k in REQUIRED if not meta.get(k)]
     if missing:
         raise HeaderError("missing " + ", ".join(missing))
-    if meta["status"] not in STATUSES:
-        raise HeaderError(f"bad status {meta['status']!r}")
+    if meta["state"] not in STATES:
+        raise HeaderError(f"bad state {meta['state']!r}")
+    if meta.get("type", TYPES["status file"]) != TYPES["status file"]:
+        raise HeaderError(f"bad type {meta['type']!r}")
     try:
         meta["updated"] = dt.date.fromisoformat(meta["updated"])
     except ValueError:
@@ -147,10 +152,10 @@ def render_index(root, items, errors, today):
                 continue
             m = w.meta
             age = (today - m["updated"]).days
-            flag = " ⚠ stale" if age >= STALE_DAYS and m["status"] != "done" else ""
-            status = m["status"] if m["report"] else f"{m['status']} · off-report"
+            flag = " ⚠ stale" if age >= STALE_DAYS and m["state"] != "done" else ""
+            state = m["state"] if m["report"] else f"{m['state']} · off-report"
             target = quote(f"{w.area}/{w.path.name}", safe="/")
-            out.append(f"| [{link_text(m['title'])}]({target}) | {status} "
+            out.append(f"| [{link_text(m['title'])}]({target}) | {state} "
                        f"| {cell(m['next'])} | {m['updated']} ({age}d){flag} |")
         out.append("")
     if errors:
@@ -171,7 +176,7 @@ def cmd_index(root, args):
 def cmd_list(root, args):
     items, _ = load_store(root)
     for w in items:
-        print(f"{w.key} · {w.meta['status']} · {w.meta['next']}")
+        print(f"{w.key} · {w.meta['state']} · {w.meta['next']}")
     return 0
 
 
