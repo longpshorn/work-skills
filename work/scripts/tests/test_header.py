@@ -152,3 +152,8 @@ def test_generated_accepts_z_and_a_trailing_comment():
 def test_rejects_bad_generated(value):
     with pytest.raises(work.HeaderError, match="bad generated"):
         work.parse_header(header(generated=value))
+
+
+def test_an_okf_status_round_trips_next_to_state():
+    meta = work.parse_header(header(state="done", status=work.ARCHIVED_STATUS))
+    assert meta["state"] == "done" and meta["status"] == work.ARCHIVED_STATUS

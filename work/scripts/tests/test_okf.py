@@ -84,6 +84,19 @@ def test_a_store_written_by_init_and_the_new_skill_conforms(fresh):
     assert area_meta["type"] == "area" and area_meta["description"]
 
 
+def test_a_workstream_archived_by_the_wrap_skill_is_deprecated_and_conforms(fresh):
+    assert work.main(["init"]) == 0
+    area, status = map(fill, skill_templates("new"))
+    build(fresh, {"garden/AREA.md": area, "garden/01-plant.md": status.replace("state: scoped", "state: done")})
+    assert work.main(["touch", "garden/01-plant"]) == 0
+    (fresh / "_archive/garden").mkdir(parents=True)
+    os.replace(fresh / "garden/01-plant.md", fresh / "_archive/garden/01-plant.md")
+    assert work.main(["index"]) == 0
+    meta = work.parse_header((fresh / "_archive/garden/01-plant.md").read_text(encoding="utf-8"))
+    assert meta["state"] == "done" and meta["status"] == work.ARCHIVED_STATUS
+    assert okf_check.problems(fresh) == []
+
+
 def test_a_store_from_before_okf_conforms_after_one_index_run(store):
     build(store, {
         "README.md": "# Work store\n",
@@ -96,3 +109,5 @@ def test_a_store_from_before_okf_conforms_after_one_index_run(store):
     assert okf_check.problems(store) != []
     assert work.main(["index"]) == 0
     assert okf_check.problems(store) == []
+    archived = work.parse_header((store / "_archive/garden/02-old.md").read_text(encoding="utf-8"))
+    assert archived["status"] == work.ARCHIVED_STATUS
