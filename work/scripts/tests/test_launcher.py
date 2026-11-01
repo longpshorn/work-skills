@@ -38,7 +38,7 @@ def compact_hook_command():
 
 
 def run_hook(env):
-    command = compact_hook_command().replace("${CLAUDE_PLUGIN_ROOT}", PLUGIN.as_posix())
+    command = compact_hook_command().replace("${CLAUDE_PLUGIN_ROOT}", str(PLUGIN))
     return subprocess.run(["sh", "-c", command], capture_output=True, env={**os.environ, **env})
 
 
