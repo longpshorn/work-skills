@@ -10,7 +10,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 1. **Find it.**
    - With an argument: `work-tools find "<argument>"`. Without one: `work-tools find --cwd "$PWD"`.
    - Exit 0: stdout is the status-file path.
-   - Exit 2: stdout lists candidate keys; ask the user which one (AskUserQuestion, at most 4 options; if more, show the list and ask for a narrower name).
+   - Exit 2: stdout lists candidate keys; ask the user which one (Claude Code: `AskUserQuestion`, at most 4 options; elsewhere a numbered question; if there are more than 4, show the list and ask for a narrower name).
    - Exit 3: no match; show `work-tools list` and offer `/work:new`.
    - Exit 4: there is no work store yet; say so and offer `/work:new`, which creates one.
 2. **Read** the area's `AREA.md`, then the status file. Open other source files only where the status file says to read them first or the next step needs them; no bulk reading.
@@ -26,4 +26,5 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 Rules:
 - Change nothing; this skill only reads.
 - Remember the workstream key (`<area>/<slug>`) for `/work:checkpoint` and `/work:wrap` later in the session.
+- Only Claude Code gets a post-compaction reminder to checkpoint. In any other agent, run `/work:checkpoint` after each milestone and before your context fills.
 - Dates and version numbers inside source documents are deliberate; never "correct" them.
