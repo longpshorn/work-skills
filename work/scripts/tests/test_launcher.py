@@ -1,7 +1,10 @@
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 import work
 
@@ -37,8 +40,8 @@ def compact_hook_command():
     return hook["command"]
 
 
-def run_hook(env):
-    command = compact_hook_command().replace("${CLAUDE_PLUGIN_ROOT}", str(PLUGIN))
+def run_hook(env, root=None):
+    command = compact_hook_command().replace("${CLAUDE_PLUGIN_ROOT}", root or str(PLUGIN))
     return subprocess.run(["sh", "-c", command], capture_output=True, env={**os.environ, **env})
 
 
@@ -51,3 +54,41 @@ def test_hook_prints_the_nudge_when_the_store_exists(tmp_path):
 def test_hook_is_silent_without_a_store(tmp_path):
     result = run_hook({"WORK_STORE": str(tmp_path / "missing")})
     assert result.returncode == 0 and result.stdout == b""
+
+
+def unc(path):
+    drive, rest = os.path.splitdrive(str(path))
+    return "\\\\localhost\\" + drive.rstrip(":") + "$" + rest
+
+
+needs_unc = pytest.mark.skipif(os.name != "nt" or not os.path.isdir(unc(PLUGIN)),
+                               reason="needs Windows and the drive's admin share")
+
+
+@needs_unc
+@pytest.mark.parametrize("form", ["backslash", "forward-slash"])
+def test_hook_reaches_the_helper_from_a_unc_plugin_root(form, tmp_path):
+    root = unc(PLUGIN) if form == "backslash" else unc(PLUGIN).replace("\\", "/")
+    result = run_hook({"WORK_STORE": str(tmp_path)}, root=root)
+    assert result.returncode == 0, result.stderr
+    assert "/work:checkpoint" in result.stdout.decode("utf-8")
+
+
+def skill_helper_calls():
+    return {path.parent.name: re.search(r"^Helper: `(.+?)`", path.read_text(encoding="utf-8"), re.M).group(1)
+            for path in sorted((PLUGIN / "skills").glob("*/SKILL.md"))}
+
+
+def test_every_skill_uses_the_hook_helper_call():
+    helper = compact_hook_command().rsplit(" ", 1)[0]
+    assert skill_helper_calls() == {name: helper for name in skill_helper_calls()}
+
+
+@needs_unc
+def test_skill_helper_call_reaches_the_helper_from_a_unc_plugin_root(tmp_path):
+    root = unc(PLUGIN).replace("\\", "/")
+    command = skill_helper_calls()["resume"].replace("${CLAUDE_PLUGIN_ROOT}", root) + " root"
+    result = subprocess.run(["sh", "-c", command], capture_output=True,
+                            env={**os.environ, "WORK_STORE": str(tmp_path)})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.decode("utf-8").strip() == str(tmp_path)
