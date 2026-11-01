@@ -29,7 +29,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    ```markdown
    ---
    title: <Title>
-   status: scoped        # idea | scoped | active | blocked | review | done
+   state: scoped         # idea | scoped | active | blocked | review | done
    next: <first next step>
    updated: <today, YYYY-MM-DD>
    repos: [<~/path>]
@@ -50,5 +50,5 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - <today> · started tracking
    ```
 
-6. Run `work-tools index` (it must exit 0), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
+6. Run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
 7. Confirm with the file path and `/work:resume <name>`.

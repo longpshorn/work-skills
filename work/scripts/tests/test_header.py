@@ -8,7 +8,7 @@ from helpers import header
 
 def test_parses_required_fields_and_lists():
     meta = work.parse_header(header(repos="[~/a, ~/b]", artifacts="https://x"))
-    assert meta["title"] == "T" and meta["status"] == "active" and meta["next"] == "Do it"
+    assert meta["title"] == "T" and meta["state"] == "active" and meta["next"] == "Do it"
     assert meta["updated"] == dt.date(2026, 10, 1)
     assert meta["repos"] == ["~/a", "~/b"]
     assert meta["artifacts"] == ["https://x"]
@@ -21,7 +21,8 @@ def test_optional_lists_default_empty():
 
 @pytest.mark.parametrize("fields,message", [
     ({"next": None}, "missing next"),
-    ({"status": "doing"}, "bad status 'doing'"),
+    ({"state": "doing"}, "bad state 'doing'"),
+    ({"type": "area"}, "bad type 'area'"),
     ({"updated": "Oct 1"}, "bad updated 'Oct 1'"),
     ({"repos": "[~/a"}, "unterminated list"),
 ])
@@ -41,9 +42,9 @@ def test_rejects_unterminated_front_matter():
 
 
 def test_hash_in_value_is_kept_but_spaced_comment_is_dropped():
-    meta = work.parse_header(header(next="Fix issue #12", status="active   # idea | active"))
+    meta = work.parse_header(header(next="Fix issue #12", state="active   # idea | active"))
     assert meta["next"] == "Fix issue #12"
-    assert meta["status"] == "active"
+    assert meta["state"] == "active"
 
 
 def test_quoted_values_are_unquoted():
@@ -60,6 +61,8 @@ def test_load_store_skips_area_md_and_underscore_dirs(store, write):
     write("garden/AREA", "# Garden\n")
     write("_archive/garden/02-old", header())
     write("garden/02-bad", "no header\n")
+    write("garden/index", "# Garden\n")
+    write("garden/log", "# Log\n")
     items, errors = work.load_store(store)
     assert [w.key for w in items] == ["garden/01-alpha"]
     assert items[0].name == "alpha" and items[0].slug == "01-alpha"
@@ -97,3 +100,23 @@ def test_report_defaults_true_and_parses_false():
 def test_rejects_bad_report_value():
     with pytest.raises(work.HeaderError, match="bad report 'no'"):
         work.parse_header(header(report="no"))
+
+
+def test_type_is_optional_and_workstream_is_accepted():
+    assert "type" not in work.parse_header(header())
+    assert work.parse_header(header(type=work.TYPES["status file"]))["type"] == "workstream"
+
+
+def test_legacy_status_is_read_as_state():
+    meta = work.parse_header(header(state=None, status="blocked"))
+    assert meta["state"] == "blocked"
+
+
+def test_state_wins_and_okf_status_is_left_alone():
+    meta = work.parse_header(header(state="review", status="deprecated"))
+    assert meta["state"] == "review" and meta["status"] == "deprecated"
+
+
+def test_okf_status_alone_is_missing_state():
+    with pytest.raises(work.HeaderError, match="missing state"):
+        work.parse_header(header(state=None, status="stable"))
