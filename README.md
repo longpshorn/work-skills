@@ -35,6 +35,8 @@ The store is `~/.work` unless you choose another folder. To use another folder, 
 }
 ```
 
+The path must be absolute or start with `~`; the helper refuses a relative one. On Windows, write the drive path with forward slashes, `"C:/Users/you/notes"`, or with doubled backslashes, `"C:\\Users\\you\\notes"`. A single backslash is not valid JSON.
+
 `/work:resume` and `/work:wrap` check the repos a workstream lists for uncommitted or unpushed work. If some of your repos live on a mount where git is slow or wrong to run (a virtual machine's shared folder, for example), set `WORK_VM_ROOT` to that mount. Repos under it are then flagged instead of checked.
 
 ## Requirements
@@ -45,11 +47,28 @@ The store is `~/.work` unless you choose another folder. To use another folder, 
 
 ## Fewer permission prompts
 
-The skills run the helper and git in the store. To stop Claude Code asking each time, allow both in `/permissions`. Use the plugin's real path (in `~/.claude/plugins/installed_plugins.json`) and your store's path:
+The skills run the helper as `sh "<plugin>/scripts/work-tools" <subcommand>` and git as `git -C "<store>" <subcommand>`. To stop Claude Code asking each time, add allow rules in `/permissions`. A rule matches the command text as written, so keep the double quotes and use absolute paths, exactly as the permission prompt shows them (no `~`).
+
+Which plugin path the skills run from depends on how you installed it:
+
+- **From GitHub** (`claude plugin marketplace add longpshorn/work-skills`): from `~/.claude/plugins/cache/work-skills/work/<version>/`, a folder that changes with every update. Put a `*` in place of the version folder so the rule survives updates:
+
+  ```
+  Bash(sh "/Users/you/.claude/plugins/cache/work-skills/work/*/scripts/work-tools" *)
+  ```
+
+  The `*` matches any text, not just one folder name.
+
+- **From a local clone** (`claude plugin marketplace add /path/to/work-skills`): from the clone itself, so the path stays the same:
+
+  ```
+  Bash(sh "/path/to/work-skills/work/scripts/work-tools" *)
+  ```
+
+For git, with your store's absolute path (`~/.work` unless you set `WORK_STORE`):
 
 ```
-Bash(sh <plugin path>/scripts/work-tools:*)
-Bash(git -C <store path>:*)
+Bash(git -C "/Users/you/.work" *)
 ```
 
 ## Development

@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import work
 from helpers import header
 
@@ -36,6 +38,13 @@ def test_relative_work_store_is_refused(tmp_path, monkeypatch, capsys):
     assert rc == 4 and "must be an absolute path" in err
     assert work.main(["init"]) == 4
     assert not (tmp_path / "rel").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drive-letter paths are absolute only on Windows")
+@pytest.mark.parametrize("value", ["C:/Users/you/notes", "C:\\Users\\you\\notes"])
+def test_windows_work_store_forms_are_accepted(value, monkeypatch, capsys):
+    monkeypatch.setenv("WORK_STORE", value)
+    assert run_root(capsys) == (0, "C:\\Users\\you\\notes")
 
 
 def test_root_works_without_a_store(tmp_path, monkeypatch, capsys):
