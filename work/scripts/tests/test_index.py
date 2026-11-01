@@ -47,3 +47,10 @@ def test_index_marks_off_report_workstreams(store, write):
     text = (store / "INDEX.md").read_text(encoding="utf-8")
     assert "| [One-off](side/01-a.md) | active · off-report | Do it | 2026-10-01 (4d) |" in text
     assert "| [Reported](ai/01-b.md) | active | Do it | 2026-10-01 (4d) |" in text
+
+
+def test_index_links_encode_spaces_in_target_only(store, write):
+    write("my area/01-x one", header(title="X one"))
+    assert work.main(["--today", "2026-10-05", "index"]) == 0
+    text = (store / "INDEX.md").read_text(encoding="utf-8")
+    assert "| [X one](my%20area/01-x%20one.md) | active | Do it | 2026-10-01 (4d) |" in text

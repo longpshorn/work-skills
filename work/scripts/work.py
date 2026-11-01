@@ -142,7 +142,8 @@ def render_index(root, items, errors, today):
             age = (today - m["updated"]).days
             flag = " ⚠ stale" if age >= STALE_DAYS and m["status"] != "done" else ""
             status = m["status"] if m["report"] else f"{m['status']} · off-report"
-            out.append(f"| [{cell(m['title'])}]({w.area}/{w.path.name}) | {status} "
+            target = f"{w.area}/{w.path.name}".replace(" ", "%20")
+            out.append(f"| [{cell(m['title'])}]({target}) | {status} "
                        f"| {cell(m['next'])} | {m['updated']} ({age}d){flag} |")
         out.append("")
     if errors:
