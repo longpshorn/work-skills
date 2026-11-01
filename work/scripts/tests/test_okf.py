@@ -55,7 +55,7 @@ def skill_templates(skill):
 
 
 def fill(template):
-    return re.sub(r"<[^>]*>", "x", template.replace("<today, YYYY-MM-DD>", "2026-10-01"))
+    return re.sub(r"<[^>]*>", "x", template)
 
 
 @pytest.fixture
@@ -75,9 +75,13 @@ def test_a_store_written_by_init_and_the_new_skill_conforms(fresh):
     assert work.main(["init"]) == 0
     area, status = map(fill, skill_templates("new"))
     build(fresh, {"garden/AREA.md": area, "garden/01-plant.md": status})
+    assert work.main(["touch", "garden/01-plant"]) == 0
     assert work.main(["index"]) == 0
     assert okf_check.problems(fresh) == []
-    assert work.parse_header((fresh / "garden/01-plant.md").read_text(encoding="utf-8"))["type"] == "workstream"
+    meta = work.parse_header((fresh / "garden/01-plant.md").read_text(encoding="utf-8"))
+    assert meta["type"] == "workstream" and meta["description"] and meta["generated"]["by"] == work.ACTOR
+    area_meta, _ = okf_check.split((fresh / "garden/AREA.md").read_text(encoding="utf-8"))
+    assert area_meta["type"] == "area" and area_meta["description"]
 
 
 def test_a_store_from_before_okf_conforms_after_one_index_run(store):
