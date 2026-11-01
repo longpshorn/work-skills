@@ -47,7 +47,7 @@ The path must be absolute or start with `~`; the helper refuses a relative one. 
 
 ## Fewer permission prompts
 
-The skills run the helper as `sh "<plugin>/scripts/work-tools" <subcommand>` and git as `git -C "<store>" <subcommand>`. To stop Claude Code asking each time, add allow rules in `/permissions`. A rule matches the command text as written, so keep the double quotes and use absolute paths, exactly as the permission prompt shows them (no `~`).
+The skills run the helper as `sh "<plugin>/scripts/work-tools" <subcommand>` and git as `git -C "<store>" <subcommand>`. To stop Claude Code asking each time, add allow rules in `/permissions`. A rule matches the command text as written, so keep the double quotes and use absolute paths, exactly as the permission prompt shows them (no `~`). On Windows that means forward slashes in the plugin path (`C:/Users/you/.claude/plugins/...`) and backslashes in the store path (`C:\Users\you\.work`).
 
 Which plugin path the skills run from depends on how you installed it:
 
