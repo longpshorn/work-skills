@@ -10,7 +10,7 @@ Private working notes for every tracked workstream on this machine. Local git on
 - `<area>/AREA.md`: the area's purpose (its `description`), how its workstreams relate, and binding rules.
 - `<area>/NN-<slug>.md`: one status file per workstream: YAML header, body, then `## Log`.
 - `side-work/`: one-off items worth tracking durably but not reporting; every file carries `report: false`.
-- `_archive/<area>/`: concluded workstreams.
+- `_archive/<area>/`: concluded workstreams, marked `status: deprecated` by `work-tools index`.
 
 ## Header
 
@@ -38,6 +38,7 @@ How the header maps to OKF:
 - `type`, `title`, `description`: OKF's own fields. `description` is one sentence; `index.md` entries start with it. `work-tools index` copies an `AREA.md`'s `**Purpose:**` line into a missing `description`; a workstream without one gets it at its next `/work:checkpoint`.
 - `generated`: OKF's record of the content's last meaningful change. `by` is always `process:work-tools`; `at` is a datetime with a UTC offset.
 - `state`: the work state. OKF reserves `status` for its lifecycle values (`draft`, `stable`, `deprecated`); a file without `status` counts as `stable`.
+- `status`: `work-tools index` gives each workstream under `_archive/` that has none the value `ARCHIVED_STATUS` from `work.py` (`deprecated`: kept for history, no longer current). It never sets one on a live workstream and never changes a `status` you wrote. Moving a file back out of `_archive/`? Delete its `status` line.
 - `next`, `updated`, `repos`, `artifacts`, `report`: extensions. `updated` is the local date of `generated.at`; drift, staleness and `index.md` read it. `work-tools touch <area>/<slug>` writes both, so never edit either by hand. A file from before `generated` keeps working with `updated` alone.
 - `## Log`: each workstream's history stays in its own file; the store writes no `log.md`.
 - `index.md`: OKF's navigation file, at the store root only.

@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
+ARCHIVED_STATUS = "deprecated"
 REQUIRED = ("title", "state", "next", "updated")
 ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
@@ -240,9 +241,10 @@ def front_matter(lines):
     return end, keys
 
 
-def upgraded(text, kind):
-    """TEXT with the OKF type for KIND added, a legacy status key renamed to state, and an AREA.md's
-    **Purpose:** line copied to its description; nothing else changes."""
+def upgraded(text, kind, archived=False):
+    """TEXT with the OKF type for KIND added, a legacy status key renamed to state, an AREA.md's
+    **Purpose:** line copied to its description and, when ARCHIVED, a workstream's missing OKF status
+    set to ARCHIVED_STATUS; nothing else changes."""
     bom = "﻿" if text.startswith("﻿") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -263,6 +265,9 @@ def upgraded(text, kind):
         value = unquote(strip_comment(lines[i]).split(":", 1)[1].strip())
         if value in STATES:
             lines[i] = lines[i].replace("status", "state", 1)
+            keys["state"] = keys.pop("status")
+    if kind == "status file" and archived and "status" not in keys:
+        lines.insert(keys["state"] + 1 if "state" in keys else end, f"status: {ARCHIVED_STATUS}{newline}")
     if "type" not in keys:
         lines.insert(1, f"type: {TYPES[kind]}{newline}")
     return bom + "".join(lines)
@@ -312,17 +317,17 @@ def cmd_touch(root, args):
     return 0
 
 
-def upgrade_file(path, kind):
+def upgrade_file(path, kind, archived=False):
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
-    new = upgraded(text, kind)
+    new = upgraded(text, kind, archived)
     if new != text:
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(new)
 
 
 def upgrade_store(root):
-    """Give every store file its OKF type, so stores written before OKF conform without a migration."""
+    """Give every store file its OKF type, and archived workstreams their status, with no migration needed."""
     if (root / "README.md").is_file():
         upgrade_file(root / "README.md", "README.md")
     archive = root / "_archive"
@@ -331,7 +336,8 @@ def upgrade_store(root):
     for folder in folders:
         for path in sorted(folder.glob("*.md")):
             if path.name.lower() not in RESERVED:
-                upgrade_file(path, "AREA.md" if path.name == "AREA.md" else "status file")
+                upgrade_file(path, "AREA.md" if path.name == "AREA.md" else "status file",
+                             archived=folder.parent == archive)
 
 
 def cmd_index(root, args):

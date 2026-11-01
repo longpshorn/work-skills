@@ -12,7 +12,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - **Log:** append to `## Log`, one line per decision or result: `- YYYY-MM-DD · <what was decided, built or found, with paths/URLs>`. Facts only; mark anything unverified as such.
    - **Header:** set `state` and `next`. Add any new artifact URLs to `artifacts`. If there is no `description`, add one after `title`: one sentence on what the workstream delivers, taken from its ask; otherwise change it only when it is now wrong. Leave `updated` and `generated` to the next step.
    - **Body:** edit sections only where they are now wrong, for example to move an answered open question into the Log.
-3. Run `work-tools touch <area>/<slug>`, which sets `updated` to today and stamps OKF `generated`, then `work-tools index`. It must exit 0; fix any header error you introduced. It also adds a missing OKF `type` and renames an old `status` key to `state`; commit those changes with the checkpoint.
+3. Run `work-tools touch <area>/<slug>`, which sets `updated` to today and stamps OKF `generated`, then `work-tools index`. It must exit 0; fix any header error you introduced. It also adds a missing OKF `type` and renames an old `status` key to `state`, and marks workstreams under `_archive/` with OKF `status`; commit those changes with the checkpoint.
 4. Commit in the store only:
    `git -C "<store>" add -A && git -C "<store>" commit -m "checkpoint: <area>/<slug> — <five-word gist>"`
    The store's branch is `log`. Never switch it to `main`.
