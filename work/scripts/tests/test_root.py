@@ -1,3 +1,4 @@
+import io
 import os
 import subprocess
 import sys
@@ -58,3 +59,12 @@ def test_output_survives_a_non_utf8_stdout(store, write):
     result = subprocess.run([sys.executable, str(WORK_PY), "list"], capture_output=True, env=env)
     assert result.returncode == 0, result.stderr
     assert "·" in result.stdout.decode("utf-8")
+
+
+def test_main_runs_with_streams_that_cannot_be_reconfigured(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORK_STORE", str(tmp_path))
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    assert work.main(["root"]) == 0
+    assert out.getvalue().strip() == str(tmp_path)

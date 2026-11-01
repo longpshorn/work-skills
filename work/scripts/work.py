@@ -363,7 +363,8 @@ def build_parser():
 def main(argv=None):
     parser, _ = build_parser()
     for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding="utf-8")
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     args = parser.parse_args(argv)
     if args.cmd == "nudge":
         return cmd_nudge()
