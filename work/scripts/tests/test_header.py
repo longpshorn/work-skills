@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 import pytest
 
@@ -79,6 +80,17 @@ def test_nudge_prints_when_store_exists(store, capsys):
 def test_nudge_silent_without_store(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("WORK_STORE", str(tmp_path / "nope"))
     assert work.main(["nudge"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_nudge_json_is_a_gemini_system_message(store, capsys):
+    assert work.main(["nudge", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"systemMessage": work.NUDGE}
+
+
+def test_nudge_json_silent_without_store(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("WORK_STORE", str(tmp_path / "nope"))
+    assert work.main(["nudge", "--json"]) == 0
     assert capsys.readouterr().out == ""
 
 

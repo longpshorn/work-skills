@@ -53,3 +53,5 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 
 6. Run `work-tools touch <area>/NN-<name>`, which writes the `updated` date and the OKF `generated` stamp. Then run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
 7. Confirm with the file path and `/work:resume <name>`.
+
+Only Claude Code gets a post-compaction reminder to checkpoint. In any other agent, run `/work:checkpoint` after each milestone and before your context fills.
