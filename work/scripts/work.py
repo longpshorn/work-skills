@@ -168,7 +168,8 @@ def link(text, target):
 
 
 def render_index(root, items, errors, today):
-    """The store's OKF index.md (spec section 8): a section per area, one linked entry per workstream."""
+    """The store's OKF index.md (spec section 8): a section per area, one linked entry per workstream,
+    led by its description."""
     out = ["---", f'okf_version: "{OKF_VERSION}"', "---", ""]
     for area in sorted({w.area for w in items}):
         out += [f"# {area}", ""]
@@ -179,8 +180,9 @@ def render_index(root, items, errors, today):
             age = (today - m["updated"]).days
             flag = " ⚠ stale" if age >= STALE_DAYS and m["state"] != "done" else ""
             state = m["state"] if m["report"] else f"{m['state']} · off-report"
-            out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {state} "
-                       f"· {m['next']} · {m['updated']} ({age}d){flag}")
+            facts = [m["description"]] if m.get("description") else []
+            facts += [state, m["next"], f"{m['updated']} ({age}d){flag}"]
+            out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {' · '.join(facts)}")
         out.append("")
     if errors:
         out += ["# Errors", ""]
