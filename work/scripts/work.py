@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 REQUIRED = ("title", "state", "next", "updated")
+ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 INDEX = "index.md"
 RESERVED = (INDEX, "log.md")
@@ -69,6 +70,25 @@ def strip_comment(raw):
     return raw
 
 
+def parse_generated(value):
+    """OKF's generated: { by: <actor>, at: <ISO 8601 datetime with a UTC offset> }, as a dict."""
+    if not (isinstance(value, str) and value.startswith("{") and value.endswith("}")):
+        raise HeaderError(f"bad generated {value!r}")
+    pairs = dict(part.partition(":")[::2] for part in value[1:-1].split(",") if part.strip())
+    generated = {k.strip(): unquote(v.strip()) for k, v in pairs.items()}
+    if not generated.get("by"):
+        raise HeaderError(f"bad generated {value!r}")
+    if "at" in generated:
+        try:
+            at = dt.datetime.fromisoformat(re.sub(r"Z$", "+00:00", generated["at"]))
+        except ValueError:
+            at = None
+        if at is None or at.tzinfo is None:
+            raise HeaderError(f"bad generated {value!r}")
+        generated["at"] = at
+    return generated
+
+
 def parse_header(text):
     lines = text.lstrip("﻿").splitlines()
     if not lines or lines[0].strip() != "---":
@@ -104,6 +124,8 @@ def parse_header(text):
         meta["updated"] = dt.date.fromisoformat(meta["updated"])
     except ValueError:
         raise HeaderError(f"bad updated {meta['updated']!r}") from None
+    if "generated" in meta:
+        meta["generated"] = parse_generated(meta["generated"])
     report = meta.get("report", "true")
     if report not in ("true", "false"):
         raise HeaderError(f"bad report {report!r}")
@@ -146,7 +168,8 @@ def link(text, target):
 
 
 def render_index(root, items, errors, today):
-    """The store's OKF index.md (spec section 8): a section per area, one linked entry per workstream."""
+    """The store's OKF index.md (spec section 8): a section per area, one linked entry per workstream,
+    led by its description."""
     out = ["---", f'okf_version: "{OKF_VERSION}"', "---", ""]
     for area in sorted({w.area for w in items}):
         out += [f"# {area}", ""]
@@ -157,8 +180,9 @@ def render_index(root, items, errors, today):
             age = (today - m["updated"]).days
             flag = " ⚠ stale" if age >= STALE_DAYS and m["state"] != "done" else ""
             state = m["state"] if m["report"] else f"{m['state']} · off-report"
-            out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {state} "
-                       f"· {m['next']} · {m['updated']} ({age}d){flag}")
+            facts = [m["description"]] if m.get("description") else []
+            facts += [state, m["next"], f"{m['updated']} ({age}d){flag}"]
+            out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {' · '.join(facts)}")
         out.append("")
     if errors:
         out += ["# Errors", ""]
@@ -191,34 +215,101 @@ def retire_legacy_index(root):
 
 
 KEY = re.compile(r"\s*([A-Za-z_][\w-]*):")
+PURPOSE = re.compile(r"^\*\*Purpose:\*\*\s*(.+?)\s*$", re.M)
 
 
-def upgraded(text, kind):
-    """TEXT with the OKF type for KIND added and a legacy status key renamed to state; nothing else changes."""
-    bom = "﻿" if text.startswith("﻿") else ""
-    lines = text[len(bom):].splitlines(keepends=True)
-    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
-    type_line = f"type: {TYPES[kind]}{newline}"
+def yaml_scalar(text):
+    """TEXT as a YAML scalar: plain, or double-quoted where plain YAML would misread it."""
+    if re.search(r"^[-?:,\[\]{}#&*!|>'\"%@`]|: |\s#|:$", text):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return text
+
+
+def front_matter(lines):
+    """(index of the closing ---, {key: index of its first line}) for LINES, or None without a complete block."""
     if not lines or lines[0].strip() != "---":
-        if kind == "status file":
-            return text
-        return f"{bom}---{newline}{type_line}---{newline}{newline}" + "".join(lines)
+        return None
     end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
     if end is None:
-        return text
+        return None
     keys = {}
     for i in range(1, end):
         match = KEY.match(lines[i])
         if match:
             keys.setdefault(match.group(1), i)
+    return end, keys
+
+
+def upgraded(text, kind):
+    """TEXT with the OKF type for KIND added, a legacy status key renamed to state, and an AREA.md's
+    **Purpose:** line copied to its description; nothing else changes."""
+    bom = "﻿" if text.startswith("﻿") else ""
+    lines = text[len(bom):].splitlines(keepends=True)
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    if not lines or lines[0].strip() != "---":
+        if kind == "status file":
+            return text
+        lines = [f"---{newline}", f"---{newline}", newline] + lines
+    block = front_matter(lines)
+    if block is None:
+        return text
+    end, keys = block
+    if kind == "AREA.md" and "description" not in keys:
+        purpose = PURPOSE.search("".join(lines[end + 1:]))
+        if purpose:
+            lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
     if kind == "status file" and "state" not in keys and "status" in keys:
         i = keys["status"]
         value = unquote(strip_comment(lines[i]).split(":", 1)[1].strip())
         if value in STATES:
             lines[i] = lines[i].replace("status", "state", 1)
     if "type" not in keys:
-        lines.insert(1, type_line)
+        lines.insert(1, f"type: {TYPES[kind]}{newline}")
     return bom + "".join(lines)
+
+
+def with_value(line, value):
+    """LINE, a 'key: value' header line, holding VALUE instead; its comment and line ending stay."""
+    head = strip_comment(line.rstrip("\r\n"))
+    return f"{head.split(':', 1)[0]}: {value}{line[len(head):]}"
+
+
+def stamped(text, now):
+    """TEXT with updated set to NOW's date and generated to { by: ACTOR, at: NOW }; nothing else changes."""
+    bom = "﻿" if text.startswith("﻿") else ""
+    lines = text[len(bom):].splitlines(keepends=True)
+    block = front_matter(lines)
+    if block is None:
+        raise HeaderError("missing front-matter")
+    end, keys = block
+    newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
+    values = {"updated": now.date().isoformat(), "generated": f"{{ by: {ACTOR}, at: {now.isoformat()} }}"}
+    for key, value in values.items():
+        if key in keys:
+            lines[keys[key]] = with_value(lines[keys[key]], value)
+        else:
+            at = keys["updated"] + 1 if "updated" in keys else end
+            lines.insert(at, f"{key}: {value}{newline}")
+            keys[key], end = at, end + 1
+    return bom + "".join(lines)
+
+
+def cmd_touch(root, args):
+    path = root / f"{args.key}.md"
+    if not path.is_file():
+        print(f"work.py: no workstream {args.key!r}", file=sys.stderr)
+        return 3
+    now = args.now or dt.datetime.now().astimezone().replace(microsecond=0)
+    with open(path, encoding="utf-8", newline="") as f:
+        text = f.read()
+    try:
+        new = stamped(text, now)
+    except HeaderError as e:
+        print(f"{args.key}: {e}", file=sys.stderr)
+        return 1
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(new)
+    return 0
 
 
 def upgrade_file(path, kind):
@@ -429,13 +520,14 @@ def has_git_identity(root):
                for ident in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"))
 
 
-HANDLERS = {"index": cmd_index, "list": cmd_list, "find": cmd_find, "drift": cmd_drift}
+HANDLERS = {"index": cmd_index, "list": cmd_list, "find": cmd_find, "drift": cmd_drift, "touch": cmd_touch}
 
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="work.py", description=__doc__)
     parser.add_argument("--today", type=dt.date.fromisoformat, default=dt.date.today(),
                         help=argparse.SUPPRESS)
+    parser.add_argument("--now", type=dt.datetime.fromisoformat, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("nudge", help="print the post-compaction reminder if the store exists")
     sub.add_parser("root", help="print the store's path, whether or not it exists")
@@ -449,6 +541,8 @@ def build_parser():
     target = drifter.add_mutually_exclusive_group(required=True)
     target.add_argument("key", nargs="?")
     target.add_argument("--all", action="store_true")
+    toucher = sub.add_parser("touch", help="stamp a workstream's updated date and OKF generated datetime")
+    toucher.add_argument("key")
     return parser, sub
 
 

@@ -12,9 +12,10 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 3. **New area?** If `<store>/<area>/` does not exist, ask for a one-line purpose and write `<area>/AREA.md`:
 
    ```markdown
+   ---
+   description: <the purpose, one line>
+   ---
    # <Area title>
-
-   **Purpose:** <one line>
 
    ## How the workstreams relate
 
@@ -24,14 +25,14 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 4. **Number.** `NN` is the next free two-digit number in the area (`01` if there are none).
 5. **Write `<area>/NN-<name>.md`** from this template:
    - `repos`: if the current directory is inside a git repo, use `git rev-parse --show-toplevel` with the home folder written as `~`; otherwise `[]`.
-   - Take the ask and the first next step from the conversation; ask the user only if they are unclear.
+   - Take the ask, its one-sentence summary for `description`, and the first next step from the conversation; ask the user only if they are unclear.
 
    ```markdown
    ---
    title: <Title>
+   description: <one sentence: what this workstream delivers>
    state: scoped         # idea | scoped | active | blocked | review | done
    next: <first next step>
-   updated: <today, YYYY-MM-DD>
    repos: [<~/path>]
    artifacts: []
    ---
@@ -50,5 +51,5 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - <today> · started tracking
    ```
 
-6. Run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
+6. Run `work-tools touch <area>/NN-<name>`, which writes the `updated` date and the OKF `generated` stamp. Then run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
 7. Confirm with the file path and `/work:resume <name>`.

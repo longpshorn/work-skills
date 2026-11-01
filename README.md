@@ -25,7 +25,7 @@ Then restart Claude Code. Your first `/work:new` creates the store.
 
 The store is a folder of Markdown files with its own local git history, on branch `log` and with no remote. It stays on the machine; the plugin never pushes it anywhere. Its `README.md` explains the file format.
 
-The store is also an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) (OKF) v0.2 bundle, so OKF tools can read it without knowing this plugin. Every file carries an OKF `type`, and `index.md` is the bundle's navigation file. A store made before OKF support needs no migration: the next `/work:checkpoint` or `/work:standup` adds the missing fields and renames `INDEX.md` to `index.md`.
+The store is also an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) (OKF) v0.2 bundle, so OKF tools can read it without knowing this plugin. Every file carries an OKF `type`; workstreams and areas carry a one-line `description`, and each workstream records when it last changed in OKF's `generated`. `index.md` is the bundle's navigation file. A store made before OKF support needs no migration: the next `/work:checkpoint` or `/work:standup` adds the missing types and area descriptions and renames `INDEX.md` to `index.md`, and each workstream gains its `description` and `generated` at its next checkpoint.
 
 The store is `~/.work` unless you choose another folder. To use another folder, set `WORK_STORE` in the `env` block of `~/.claude/settings.json`, so every Claude Code session, the hook and the helper see it:
 

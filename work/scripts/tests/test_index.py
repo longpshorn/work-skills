@@ -121,3 +121,12 @@ def test_index_drops_a_legacy_index_beside_a_new_one(store, write):
         pytest.skip("case-insensitive file system: the two names are one file")
     assert work.main(["index"]) == 0
     assert names(store) == ["index.md"]
+
+
+def test_index_entry_leads_with_the_description_when_there_is_one(store, write):
+    write("ai/01-a", header(title="Alpha", description="Grow [tomatoes] on the balcony"))
+    write("ai/02-b", header(title="Beta"))
+    assert work.main(["--today", "2026-10-05", "index"]) == 0
+    text = (store / "index.md").read_text(encoding="utf-8")
+    assert "* [Alpha](ai/01-a.md) - Grow [tomatoes] on the balcony · active · Do it · 2026-10-01 (4d)\n" in text
+    assert "* [Beta](ai/02-b.md) - active · Do it · 2026-10-01 (4d)\n" in text
