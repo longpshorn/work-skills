@@ -1,5 +1,6 @@
 """install-skills: rendered copies of the skills for agents other than Claude Code (herdr-skills#30's design)."""
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -279,3 +280,10 @@ def test_an_installed_skills_helper_call_runs_without_claude_plugin_root(dest, t
                             env={**env, "WORK_STORE": str(tmp_path / "store")})
     assert result.returncode == 0, result.stderr
     assert result.stdout.decode("utf-8").strip() == str(tmp_path / "store")
+
+
+def test_the_readme_shows_the_same_hook_snippets_install_skills_prints():
+    readme = (Path(PLUGIN_ROOT).parent / "README.md").read_text(encoding="utf-8")
+    blocks = [json.loads(b) for b in re.findall(r"```json\n *(\{\"hooks\".*?)\n *```", readme, re.S)]
+    expected = [snippet("/path/to/work-skills/work/scripts/work-tools") for _, _, snippet in work.NUDGE_HOOKS.values()]
+    assert blocks == expected
