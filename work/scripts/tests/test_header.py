@@ -120,3 +120,35 @@ def test_state_wins_and_okf_status_is_left_alone():
 def test_okf_status_alone_is_missing_state():
     with pytest.raises(work.HeaderError, match="missing state"):
         work.parse_header(header(state=None, status="stable"))
+
+
+def test_description_and_generated_are_optional():
+    meta = work.parse_header(header())
+    assert "description" not in meta and "generated" not in meta
+
+
+def test_parses_description_and_generated_mapping():
+    meta = work.parse_header(header(description="Grow tomatoes",
+                                    generated="{ by: process:work-tools, at: 2026-10-01T09:30:00+02:00 }"))
+    assert meta["description"] == "Grow tomatoes"
+    assert meta["generated"] == {"by": "process:work-tools",
+                                 "at": dt.datetime(2026, 10, 1, 9, 30, tzinfo=dt.timezone(dt.timedelta(hours=2)))}
+
+
+def test_generated_accepts_z_and_a_trailing_comment():
+    meta = work.parse_header(header(generated="{ by: human:x, at: 2026-10-01T09:30:00Z }   # set by touch"))
+    assert meta["generated"]["at"] == dt.datetime(2026, 10, 1, 9, 30, tzinfo=dt.timezone.utc)
+
+
+@pytest.mark.parametrize("value", [
+    "2026-10-01T09:30:00Z",
+    "{ at: 2026-10-01T09:30:00Z }",
+    "{ by: , at: 2026-10-01T09:30:00Z }",
+    "{ by: human:x, at: 2026-10-01 }",
+    "{ by: human:x, at: 2026-10-01T09:30:00 }",
+    "{ by: human:x, at: 2026-10-01T09:30:00Z",
+    "[by, at]",
+])
+def test_rejects_bad_generated(value):
+    with pytest.raises(work.HeaderError, match="bad generated"):
+        work.parse_header(header(generated=value))

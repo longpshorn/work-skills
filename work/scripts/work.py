@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 REQUIRED = ("title", "state", "next", "updated")
+ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 INDEX = "index.md"
 RESERVED = (INDEX, "log.md")
@@ -69,6 +70,25 @@ def strip_comment(raw):
     return raw
 
 
+def parse_generated(value):
+    """OKF's generated: { by: <actor>, at: <ISO 8601 datetime with a UTC offset> }, as a dict."""
+    if not (isinstance(value, str) and value.startswith("{") and value.endswith("}")):
+        raise HeaderError(f"bad generated {value!r}")
+    pairs = dict(part.partition(":")[::2] for part in value[1:-1].split(",") if part.strip())
+    generated = {k.strip(): unquote(v.strip()) for k, v in pairs.items()}
+    if not generated.get("by"):
+        raise HeaderError(f"bad generated {value!r}")
+    if "at" in generated:
+        try:
+            at = dt.datetime.fromisoformat(re.sub(r"Z$", "+00:00", generated["at"]))
+        except ValueError:
+            at = None
+        if at is None or at.tzinfo is None:
+            raise HeaderError(f"bad generated {value!r}")
+        generated["at"] = at
+    return generated
+
+
 def parse_header(text):
     lines = text.lstrip("﻿").splitlines()
     if not lines or lines[0].strip() != "---":
@@ -104,6 +124,8 @@ def parse_header(text):
         meta["updated"] = dt.date.fromisoformat(meta["updated"])
     except ValueError:
         raise HeaderError(f"bad updated {meta['updated']!r}") from None
+    if "generated" in meta:
+        meta["generated"] = parse_generated(meta["generated"])
     report = meta.get("report", "true")
     if report not in ("true", "false"):
         raise HeaderError(f"bad report {report!r}")
