@@ -17,6 +17,9 @@ from urllib.parse import quote
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 REQUIRED = ("title", "state", "next", "updated")
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
+INDEX = "index.md"
+RESERVED = (INDEX, "log.md")
+OKF_VERSION = "0.2"
 STALE_DAYS = 14
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
@@ -117,7 +120,7 @@ def load_store(root):
     areas = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
     for area in areas:
         for path in sorted(area.glob("*.md")):
-            if path.name == "AREA.md":
+            if path.name == "AREA.md" or path.name.lower() in RESERVED:
                 continue
             try:
                 meta = parse_header(path.read_text(encoding="utf-8"))
@@ -165,7 +168,61 @@ def render_index(root, items, errors, today):
     return "\n".join(out)
 
 
+KEY = re.compile(r"\s*([A-Za-z_][\w-]*):")
+
+
+def upgraded(text, kind):
+    """TEXT with the OKF type for KIND added and a legacy status key renamed to state; nothing else changes."""
+    bom = "﻿" if text.startswith("﻿") else ""
+    lines = text[len(bom):].splitlines(keepends=True)
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    type_line = f"type: {TYPES[kind]}{newline}"
+    if not lines or lines[0].strip() != "---":
+        if kind == "status file":
+            return text
+        return f"{bom}---{newline}{type_line}---{newline}{newline}" + "".join(lines)
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        return text
+    keys = {}
+    for i in range(1, end):
+        match = KEY.match(lines[i])
+        if match:
+            keys.setdefault(match.group(1), i)
+    if kind == "status file" and "state" not in keys and "status" in keys:
+        i = keys["status"]
+        value = unquote(strip_comment(lines[i]).split(":", 1)[1].strip())
+        if value in STATES:
+            lines[i] = lines[i].replace("status", "state", 1)
+    if "type" not in keys:
+        lines.insert(1, type_line)
+    return bom + "".join(lines)
+
+
+def upgrade_file(path, kind):
+    with open(path, encoding="utf-8", newline="") as f:
+        text = f.read()
+    new = upgraded(text, kind)
+    if new != text:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(new)
+
+
+def upgrade_store(root):
+    """Give every store file its OKF type, so stores written before OKF conform without a migration."""
+    if (root / "README.md").is_file():
+        upgrade_file(root / "README.md", "README.md")
+    archive = root / "_archive"
+    folders = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))]
+    folders += [p for p in archive.iterdir() if p.is_dir()] if archive.is_dir() else []
+    for folder in folders:
+        for path in sorted(folder.glob("*.md")):
+            if path.name.lower() not in RESERVED:
+                upgrade_file(path, "AREA.md" if path.name == "AREA.md" else "status file")
+
+
 def cmd_index(root, args):
+    upgrade_store(root)
     items, errors = load_store(root)
     (root / "INDEX.md").write_text(render_index(root, items, errors, args.today), encoding="utf-8")
     for path, msg in errors:

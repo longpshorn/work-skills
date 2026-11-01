@@ -61,6 +61,8 @@ def test_load_store_skips_area_md_and_underscore_dirs(store, write):
     write("garden/AREA", "# Garden\n")
     write("_archive/garden/02-old", header())
     write("garden/02-bad", "no header\n")
+    write("garden/index", "# Garden\n")
+    write("garden/log", "# Log\n")
     items, errors = work.load_store(store)
     assert [w.key for w in items] == ["garden/01-alpha"]
     assert items[0].name == "alpha" and items[0].slug == "01-alpha"
