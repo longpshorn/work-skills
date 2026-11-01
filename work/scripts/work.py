@@ -17,6 +17,7 @@ STATUSES = ("idea", "scoped", "active", "blocked", "review", "done")
 REQUIRED = ("title", "status", "next", "updated")
 STALE_DAYS = 14
 GIT_TIMEOUT = 10
+IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
 NUDGE = ("Context was just compacted. If this session touched a tracked "
          "workstream, run /work:checkpoint now from the summary.")
 
@@ -319,7 +320,7 @@ def cmd_init(root):
     if not readme.exists():
         readme.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
     git(root, "add", "-A")
-    commit = subprocess.run(["git", "-C", str(root), "-c", "user.useConfigOnly=true", "commit", "-q",
+    commit = subprocess.run(["git", "-C", str(root), *IDENTITY_ONLY, "commit", "-q",
                              "-m", "init: work store"], capture_output=True, text=True, timeout=GIT_TIMEOUT)
     if commit.returncode and not has_git_identity(root):
         print(f"work.py: created {root}, but not committed: git has no identity here. "
@@ -333,7 +334,7 @@ def cmd_init(root):
 
 
 def has_git_identity(root):
-    return all(git(root, "-c", "user.useConfigOnly=true", "var", ident)[0] == 0
+    return all(git(root, *IDENTITY_ONLY, "var", ident)[0] == 0
                for ident in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"))
 
 
