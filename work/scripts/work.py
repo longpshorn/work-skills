@@ -20,7 +20,8 @@ REQUIRED = ("title", "state", "next", "updated")
 ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 INDEX = "index.md"
-RESERVED = (INDEX, "log.md")
+LOG = "log.md"
+RESERVED = (INDEX, LOG)
 OKF_VERSION = "0.2"
 STALE_DAYS = 14
 GIT_TIMEOUT = 10
@@ -194,6 +195,39 @@ def render_index(root, items, errors, today):
     return "\n".join(out)
 
 
+LOG_LINE = re.compile(r"[-*]\s+(\d{4}-\d{2}-\d{2})\s+·\s+(.*\S)")
+HEADING = re.compile(r"(#{1,2})\s+(.*?)\s*$")
+
+
+def log_entries(text):
+    """(date, fact) for each well-formed `- YYYY-MM-DD · <fact>` line under `## Log`, in file order."""
+    entries, in_log = [], False
+    for line in text.lstrip("\ufeff").splitlines():
+        heading = HEADING.match(line)
+        if heading:
+            in_log = heading.group(1) == "##" and heading.group(2) == "Log"
+            continue
+        match = LOG_LINE.fullmatch(line.strip()) if in_log else None
+        if match:
+            try:
+                entries.append((dt.date.fromisoformat(match.group(1)), match.group(2)))
+            except ValueError:
+                pass
+    return entries
+
+
+def render_log(root, items):
+    """The store's OKF log.md (spec section 9): every workstream Log line under its date, newest first."""
+    by_date = {}
+    for target, w in sorted((w.path.relative_to(root).as_posix(), w) for w in items):
+        for day, fact in reversed(log_entries(w.path.read_text(encoding="utf-8"))):
+            by_date.setdefault(day, []).append(f"* {link(w.meta['title'], target)}: {fact}")
+    out = ["# Work store log"]
+    for day in sorted(by_date, reverse=True):
+        out += ["", f"## {day}", "", *by_date[day]]
+    return "\n".join(out) + "\n"
+
+
 def git_tracks(root, name):
     return (root / ".git").exists() and git(root, "ls-files", "--error-unmatch", name)[0] == 0
 
@@ -345,6 +379,8 @@ def cmd_index(root, args):
     items, errors = load_store(root)
     retire_legacy_index(root)
     (root / INDEX).write_text(render_index(root, items, errors, args.today), encoding="utf-8")
+    archived = load_store(root / "_archive")[0] if (root / "_archive").is_dir() else []
+    (root / LOG).write_text(render_log(root, items + archived), encoding="utf-8")
     for path, msg in errors:
         print(f"{path.relative_to(root).as_posix()}: {msg}", file=sys.stderr)
     return 1 if errors else 0
@@ -538,7 +574,7 @@ def build_parser():
     sub.add_parser("nudge", help="print the post-compaction reminder if the store exists")
     sub.add_parser("root", help="print the store's path, whether or not it exists")
     sub.add_parser("init", help="create the store (git on branch log, no remote) unless it exists")
-    sub.add_parser("index", help="regenerate index.md and add missing OKF types; exit 1 on header errors")
+    sub.add_parser("index", help="regenerate index.md and log.md and add missing OKF types; exit 1 on header errors")
     sub.add_parser("list", help="one line per workstream")
     finder = sub.add_parser("find", help="match a workstream by name, or by --cwd inside a linked repo")
     finder.add_argument("query", nargs="?")
