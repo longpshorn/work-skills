@@ -41,8 +41,9 @@ def compact_hook_command():
 
 
 def run_hook(env, root=None):
-    command = compact_hook_command().replace("${CLAUDE_PLUGIN_ROOT}", root or str(PLUGIN))
-    return subprocess.run(["sh", "-c", command], capture_output=True, env={**os.environ, **env})
+    # Claude Code leaves ${CLAUDE_PLUGIN_ROOT} in hook commands for the shell to expand from the environment.
+    root_env = {"CLAUDE_PLUGIN_ROOT": root or str(PLUGIN)}
+    return subprocess.run(["sh", "-c", compact_hook_command()], capture_output=True, env={**os.environ, **root_env, **env})
 
 
 def test_hook_prints_the_nudge_when_the_store_exists(tmp_path):
@@ -86,8 +87,9 @@ def test_every_skill_uses_the_hook_helper_call():
 
 @needs_unc
 def test_skill_helper_call_reaches_the_helper_from_a_unc_plugin_root(tmp_path):
+    # Claude Code writes the plugin root into skill text with forward slashes, e.g. //localhost/C$/...
     root = unc(PLUGIN).replace("\\", "/")
-    command = skill_helper_calls()["resume"].replace("${CLAUDE_PLUGIN_ROOT}", root) + " root"
+    command =skill_helper_calls()["resume"].replace("${CLAUDE_PLUGIN_ROOT}", root) + " root"
     result = subprocess.run(["sh", "-c", command], capture_output=True,
                             env={**os.environ, "WORK_STORE": str(tmp_path)})
     assert result.returncode == 0, result.stderr
