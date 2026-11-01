@@ -10,9 +10,9 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 1. **Which workstream?** Use the one `/work:resume` loaded. Otherwise, match the session's work with `work-tools find`. If the session touched several workstreams, ask which (multi-select; checkpoint each one). If none is tracked, offer `/work:new`.
 2. **Update the status file** with Edit (never rewrite the whole file):
    - **Log:** append to `## Log`, one line per decision or result: `- YYYY-MM-DD · <what was decided, built or found, with paths/URLs>`. Facts only; mark anything unverified as such.
-   - **Header:** set `status`, `next` and `updated` (today). Add any new artifact URLs to `artifacts`.
+   - **Header:** set `state`, `next` and `updated` (today). Add any new artifact URLs to `artifacts`.
    - **Body:** edit sections only where they are now wrong, for example to move an answered open question into the Log.
-3. Run `work-tools index`. It must exit 0; fix any header error you introduced.
+3. Run `work-tools index`. It must exit 0; fix any header error you introduced. It also adds a missing OKF `type` and renames an old `status` key to `state`; commit those changes with the checkpoint.
 4. Commit in the store only:
    `git -C "<store>" add -A && git -C "<store>" commit -m "checkpoint: <area>/<slug> — <five-word gist>"`
    The store's branch is `log`. Never switch it to `main`.

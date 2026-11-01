@@ -16,7 +16,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 2. **Read** the area's `AREA.md`, then the status file. Open other source files only where the status file says to read them first or the next step needs them; no bulk reading.
 3. **Check drift:** `work-tools drift <area>/<slug>`.
 4. **Brief** in at most 6 lines:
-   - **Where it stands:** status plus one line.
+   - **Where it stands:** state plus one line.
    - **Since last time:** the drift lines, or "nothing changed".
    - **Next:** the `next` field.
    - **Gating questions:** at most 2 open questions or blockers that block the next step.

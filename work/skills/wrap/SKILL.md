@@ -11,7 +11,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 2. **Loose ends.** Run `work-tools drift <key>` and present each item: uncommitted or unpushed repo work, and linked source files changed since `updated`. Where a changed file is the source of one of the workstream's `artifacts`, say that artifact may need a republish. Ask what to do with each: commit, push, republish or leave. Do nothing to any repo or artifact without an explicit yes.
 3. **Memory.** List candidate durable lessons from this session (corrections the user made, preferences they confirmed, non-obvious project facts), following the memory rules: no duplicates, and nothing the store or the repo already records. Write only the ones the user approves.
 4. **Done?** Ask whether the workstream is finished. If yes:
-   - set `status: done` and add a Log line
+   - set `state: done` and add a Log line
    - create `<store>/_archive/<area>` if it is missing
    - `git -C "<store>" mv <area>/<file> _archive/<area>/<file>`
    - run `work-tools index`
