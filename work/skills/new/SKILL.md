@@ -7,7 +7,7 @@ description: Start tracking a new workstream in the user's work store. Use for "
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
-1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning about git's identity.
+1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning (a missing git identity, or git's own commit error).
 2. **Parse `<area>/<name>`.** Both parts are lower-kebab-case; ask for whatever is missing.
 3. **New area?** If `<store>/<area>/` does not exist, ask for a one-line purpose and write `<area>/AREA.md`:
 

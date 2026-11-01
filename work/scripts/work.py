@@ -319,13 +319,22 @@ def cmd_init(root):
     if not readme.exists():
         readme.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
     git(root, "add", "-A")
-    rc, _ = git(root, "-c", "user.useConfigOnly=true", "commit", "-q", "-m", "init: work store")
-    if rc:
+    commit = subprocess.run(["git", "-C", str(root), "-c", "user.useConfigOnly=true", "commit", "-q",
+                             "-m", "init: work store"], capture_output=True, text=True, timeout=GIT_TIMEOUT)
+    if commit.returncode and not has_git_identity(root):
         print(f"work.py: created {root}, but not committed: git has no identity here. "
               "Set one with git config user.name and git config user.email, then commit in the store.",
               file=sys.stderr)
+    elif commit.returncode:
+        print(f"work.py: created {root}, but not committed: git commit failed:\n{commit.stderr.rstrip()}\n"
+              "Fix that, then commit in the store.", file=sys.stderr)
     print(root)
     return 0
+
+
+def has_git_identity(root):
+    return all(git(root, "-c", "user.useConfigOnly=true", "var", ident)[0] == 0
+               for ident in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"))
 
 
 HANDLERS = {"index": cmd_index, "list": cmd_list, "find": cmd_find, "drift": cmd_drift}
