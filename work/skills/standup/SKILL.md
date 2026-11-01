@@ -1,6 +1,6 @@
 ---
 name: standup
-description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from regenerating index.md.
+description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from regenerating index.md and log.md.
 ---
 
 # Standup: every workstream at a glance
@@ -16,4 +16,4 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - **Top 5 next steps:** order by state (`active`, `review`, `blocked`, `scoped`, `idea`), then oldest `updated` first
 4. Offer `/work:resume <name>` for the top item.
 
-Do not commit the regenerated index or the OKF `type` fields it may add; the next `/work:checkpoint` will. Change nothing else.
+Do not commit the regenerated `index.md` and `log.md` or the OKF `type` fields `index` may add; the next `/work:checkpoint` will. Change nothing else.
