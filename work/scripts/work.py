@@ -765,10 +765,10 @@ def pull_plugin(plugin_root):
     if porcelain.strip():
         raise InstallError("The clone at %s has local changes; commit or remove them, or re-render without pulling "
                            "(install-skills --update --no-pull).\n%s" % (plugin_root, porcelain.rstrip()))
-    result = subprocess.run(["git", "-C", plugin_root, "pull", "--ff-only"], capture_output=True, text=True)
-    if result.returncode != 0:
-        raise InstallError("git pull --ff-only failed in %s:\n%s" % (plugin_root, (result.stdout + result.stderr).strip()))
-    return result.stdout.strip()
+    proc = subprocess.run(["git", "-C", plugin_root, "pull", "--ff-only"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise InstallError("git pull --ff-only failed in %s:\n%s" % (plugin_root, (proc.stderr or proc.stdout).strip()))
+    return proc.stdout.strip()
 
 
 def install_skills_command(args):
