@@ -14,6 +14,6 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - set `state: done`, add a Log line and run `work-tools touch <key>`
    - create `<store>/_archive/<area>` if it is missing
    - `git -C "<store>" mv <area>/<file> _archive/<area>/<file>`
-   - run `work-tools index`
-   - commit `wrap: archive <key>`
+   - run `work-tools index`; it also marks the archived file with OKF `status: deprecated` (`ARCHIVED_STATUS` in the plugin's `work.py`)
+   - commit: `git -C "<store>" add -A && git -C "<store>" commit -m "wrap: archive <key>"`
 5. **Hand back.** End the reply with the one-line state. If the workstream stays open, add the resume command: `/work:resume <q>`, where `<q>` is the shortest name for which `work-tools find <q>` exits 0 on this workstream (verify it before printing). If it was archived in step 4, say "Archived; nothing to resume" instead, since `find` does not search `_archive/`.
