@@ -215,6 +215,14 @@ def retire_legacy_index(root):
 
 
 KEY = re.compile(r"\s*([A-Za-z_][\w-]*):")
+PURPOSE = re.compile(r"^\*\*Purpose:\*\*\s*(.+?)\s*$", re.M)
+
+
+def yaml_scalar(text):
+    """TEXT as a YAML scalar: plain, or double-quoted where plain YAML would misread it."""
+    if re.search(r"^[-?:,\[\]{}#&*!|>'\"%@`]|: |\s#|:$", text):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return text
 
 
 def front_matter(lines):
@@ -233,26 +241,30 @@ def front_matter(lines):
 
 
 def upgraded(text, kind):
-    """TEXT with the OKF type for KIND added and a legacy status key renamed to state; nothing else changes."""
+    """TEXT with the OKF type for KIND added, a legacy status key renamed to state, and an AREA.md's
+    **Purpose:** line copied to its description; nothing else changes."""
     bom = "﻿" if text.startswith("﻿") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
-    type_line = f"type: {TYPES[kind]}{newline}"
     if not lines or lines[0].strip() != "---":
         if kind == "status file":
             return text
-        return f"{bom}---{newline}{type_line}---{newline}{newline}" + "".join(lines)
+        lines = [f"---{newline}", f"---{newline}", newline] + lines
     block = front_matter(lines)
     if block is None:
         return text
     end, keys = block
+    if kind == "AREA.md" and "description" not in keys:
+        purpose = PURPOSE.search("".join(lines[end + 1:]))
+        if purpose:
+            lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
     if kind == "status file" and "state" not in keys and "status" in keys:
         i = keys["status"]
         value = unquote(strip_comment(lines[i]).split(":", 1)[1].strip())
         if value in STATES:
             lines[i] = lines[i].replace("status", "state", 1)
     if "type" not in keys:
-        lines.insert(1, type_line)
+        lines.insert(1, f"type: {TYPES[kind]}{newline}")
     return bom + "".join(lines)
 
 
