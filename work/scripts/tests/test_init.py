@@ -72,6 +72,20 @@ def test_init_without_git_identity_creates_store_and_says_so(fresh, tmp_path, mo
     assert "not committed" in out.err and "git config user.email" in out.err
 
 
+def test_init_shows_gits_own_error_when_commit_fails_for_another_reason(fresh, tmp_path, monkeypatch, capsys):
+    for key, value in IDENTITY.items():
+        monkeypatch.setenv(key, value)
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text("[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = no-such-signer-xyz\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+    rc, out = init(capsys)
+    assert rc == 0 and out.out.strip() == str(fresh)
+    assert (fresh / "README.md").is_file()
+    assert git_out(fresh, "log", "--oneline") == ""
+    assert "not committed" in out.err and "no-such-signer-xyz" in out.err
+    assert "git config user.email" not in out.err
+
+
 def test_init_refuses_a_file_at_the_path(fresh, capsys):
     fresh.write_text("a file\n", encoding="utf-8")
     rc, out = init(capsys)
