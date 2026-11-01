@@ -46,9 +46,14 @@ def check_index(path, root, meta, body):
 
 def check_log(meta, body):
     problems = ["log.md has frontmatter"] if meta is not None else []
+    dates = []
     for line in body:
         if line.startswith("## ") and not DATE.match(line[3:].strip()):
             problems.append(f"log.md date heading is not YYYY-MM-DD: {line!r}")
+        elif line.startswith("## "):
+            dates.append(line[3:].strip())
+    if dates != sorted(set(dates), reverse=True):
+        problems.append("log.md dates are not newest first")
     return problems
 
 

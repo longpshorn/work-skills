@@ -43,6 +43,8 @@ def test_checker_passes_a_conformant_bundle(tmp_path):
     ("sub/index.md", '---\nokf_version: "0.2"\n---\n', "sub/index.md: index.md frontmatter is allowed only"),
     ("index.md", "# A\n\n| [T](t.md) | x |\n", "index.md: index.md line is neither"),
     ("log.md", "# Log\n\n## May 22\n", "log.md: log.md date heading is not YYYY-MM-DD"),
+    ("log.md", "# Log\n\n## 2026-05-15\n\n## 2026-05-22\n", "log.md: log.md dates are not newest first"),
+    ("log.md", "# Log\n\n## 2026-05-22\n\n## 2026-05-22\n", "log.md: log.md dates are not newest first"),
 ])
 def test_checker_reports_each_violation(tmp_path, name, text, reason):
     found = okf_check.problems(build(tmp_path, {**GOOD, name: text}))
@@ -77,6 +79,7 @@ def test_a_store_written_by_init_and_the_new_skill_conforms(fresh):
     build(fresh, {"garden/AREA.md": area, "garden/01-plant.md": status})
     assert work.main(["touch", "garden/01-plant"]) == 0
     assert work.main(["index"]) == 0
+    assert (fresh / "log.md").is_file()
     assert okf_check.problems(fresh) == []
     meta = work.parse_header((fresh / "garden/01-plant.md").read_text(encoding="utf-8"))
     assert meta["type"] == "workstream" and meta["description"] and meta["generated"]["by"] == work.ACTOR
