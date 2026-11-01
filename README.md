@@ -1,5 +1,7 @@
 # work-skills
 
+[![AgentAvow](https://agentavow.com/api/v1/public/scan/longpshorn/work-skills/badge)](https://agentavow.com/check/longpshorn/work-skills)
+
 Claude Code skills for keeping track of ongoing work across sessions. Each workstream gets one status file (what was asked, where it stands, the single next step, and a dated log), so a fresh session can pick up exactly where the last one stopped.
 
 | Command | What it does |
