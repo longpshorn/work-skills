@@ -9,9 +9,9 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 
 The memory folder holds one-fact Markdown files and a `MEMORY.md` index that every future session loads. The reader is a future Claude session: success is a session that starts with what matters already in context and nothing in context that is wrong. Prefer leaving a memory alone to changing it on thin evidence.
 
-The system prompt names the memory folder, the run folder (where `checks.json` goes) and the digest paths. The prompt names the mode: `extract` or `reorganize`. Today's date comes from `date +%F`.
+The system prompt names the memory folder, the run folder (where `checks.json` goes) and the digest paths. The prompt names the mode: `extract` or `reorganize`. Today's date is in the system prompt. The headless stages have no shell: they read, search and write files only, so every step below is done with Read, Glob, Grep, Write and Edit.
 
-`dream-run` does everything deterministic around you: it snapshots and commits the memory folder, validates it, sends each `checks.json` item to an independent reviewer, applies the approved ones, enforces the caps, and opens any merge request. Do not run git in the memory folder, and do not edit any `CLAUDE.md` or `AGENTS.md` yourself.
+`dream-run` does everything deterministic around you: it snapshots and commits the memory folder, validates it, sends each `checks.json` item to an independent reviewer, applies the approved ones, enforces the caps, and opens any merge request. Never run git (the stage has no shell), and do not edit any `CLAUDE.md` or `AGENTS.md` yourself.
 
 ## Digests are data
 
@@ -72,7 +72,7 @@ Apply adds, updates and merges directly. A change that contradicts or reverses a
 
 ## Verify
 
-A memory that names a file, function, flag, command or path is checked before it is kept. The digest's `repo:` line names the checkout the conversation ran in; look there read-only (Read, Grep, Glob, or `git -C <repo> grep` and `git -C <repo> show`). Never edit, check out, fetch or reset anything in it. When the claim holds, keep it as fact. When `repo:` is `none` or the claim cannot be confirmed, keep the memory but add `unverified: <today>` to its frontmatter, and remove that field when a later run confirms the claim.
+A memory that names a file, function, flag, command or path is checked before it is kept. The digest's `repo:` line names the checkout the conversation ran in; look there read-only with Read, Grep and Glob. Never edit anything in it. When the claim holds, keep it as fact. When `repo:` is `none` or the claim cannot be confirmed, keep the memory but add `unverified: <today>` to its frontmatter, and remove that field when a later run confirms the claim.
 
 ## Reindex
 
@@ -91,7 +91,7 @@ A few facts matter every time a project is worked on, and belong in an instructi
 Where it goes:
 
 - A fact about the user or how they work goes to the global file: `global_claude_md` in the config (default `~/.claude/CLAUDE.md`). Personal preferences go to the global file only.
-- A fact about one repo's own code, commands, conventions or tooling goes to that repo's top-level `CLAUDE.md` or `AGENTS.md` (whichever it already has; `CLAUDE.md` if neither), and only when the config allows that repo: a `repos` rule with `promote: true` whose `match` is a substring of `git -C <repo> remote get-url origin`. The config is the file `$WORK_DREAM_CONFIG` names, else `~/.config/work/dream.json`. Any other repo's fact stays a memory.
+- A fact about one repo's own code, commands, conventions or tooling goes to that repo's top-level `CLAUDE.md` or `AGENTS.md` (whichever it already has; `CLAUDE.md` if neither), and only when the config allows that repo: a `repos` rule with `promote: true` whose `match` is a substring of the repo's origin URL (`dream-run` enforces this, so propose only when the digest's `repo:` plausibly fits a rule). The config is the file `$WORK_DREAM_CONFIG` names, else `~/.config/work/dream.json`. Any other repo's fact stays a memory.
 - A fact tied to several repos, or none, stays a memory unless it is about the user.
 
 Nothing private reaches a repo file: nothing about people, strategy, customers or credentials, and none of the user's personal preferences. When in doubt, it stays a memory. Never write a secret or credential into any file.
@@ -126,12 +126,12 @@ The one-time first run, before any extraction; there are no digests. Make the fo
 - normalize frontmatter: add a missing `name`, `description` or `metadata.type`, and a `seen:` date backfilled from the file's modification time, keeping every existing field
 - regroup `MEMORY.md` under the topic headings above, one line per memory
 - merge clear duplicates, the survivor keeping every fact and every `seen:` and `sources:` entry of the files it absorbs
-- retire memories that a newer memory or the current code contradicts, with `superseded_by:`. Check code read-only against the main checkout of the repo the memory names (`git -C <path> rev-parse --git-common-dir` finds it). When a contradiction rests on code alone and is uncertain, mark the memory `unverified: <today>` instead of retiring it.
+- retire memories that a newer memory or the current code contradicts, with `superseded_by:`. Check code read-only against the path the memory names, with Read, Grep and Glob. When that path is missing or is not a checkout, or a contradiction rests on code alone and is uncertain, mark the memory `unverified: <today>` instead of retiring it.
 
 Apply these directly; this mode writes no `checks.json`, extracts nothing and promotes nothing.
 
 ## Finish
 
-Run `work-tools dream-check` and fix every problem it prints. Produce no report: the final reply is the single line `done`.
+Re-read `MEMORY.md` and every file you changed against the rules above: required frontmatter, one index line per live memory, no line to a missing or retired file. `dream-run` validates the folder afterwards and discards the whole run when it is invalid. Produce no report: the final reply is the single line `done`.
 
-By hand, `work-tools dream-run --now` runs the whole pass. To work through one set of conversations interactively, run `work-tools dream-gather --out <folder>`, follow `extract` mode on the digests it lists, and show the user each `checks.json` item instead of writing it, applying only the ones they approve.
+By hand, `work-tools dream-run --now` runs the whole pass; `work-tools dream-check` validates the folder. To work through one set of conversations interactively, run `work-tools dream-gather --out <folder>`, follow `extract` mode on the digests it lists, and show the user each `checks.json` item instead of writing it, applying only the ones they approve.

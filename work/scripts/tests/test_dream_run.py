@@ -34,6 +34,8 @@ else:
     stage = "extract"
 with open(os.environ["FAKE_CALLS"], "a") as handle:
     handle.write(stage + "\n")
+with open(os.environ["FAKE_CALLS"] + ".argv", "a") as handle:
+    handle.write(json.dumps([stage] + args) + "\n")
 step = plan.get(stage, {})
 result = "done"
 if stage == "check":
@@ -573,3 +575,20 @@ def test_open_mrs_recorded_before_a_later_repo_fails_are_saved(world, monkeypatc
     assert run() == 1
     assert dream.load_state()["open_mrs"][str(repo.resolve())]["number"] == 7
     assert "failed: " in log_lines(world)[-1]
+
+
+def test_extract_stage_is_confined_to_the_memory_and_run_folders_and_runs_no_command(world):
+    talk(world, 3)
+    world.plan({"extract": {"checks": [{"id": "c", "kind": "contradiction", "memory": "old.md", "ops": [
+        {"op": "retire", "path": "old.md", "superseded_by": "none"}]}]}})
+    assert run() == 0
+    argvs = [json.loads(line) for line in (world.calls.parent / "calls.argv").read_text().splitlines()]
+    extract = next(a for a in argvs if a[0] == "extract")
+    mem = str(world.mem.resolve()).lstrip("/")
+    assert extract[extract.index("--permission-mode") + 1] == "dontAsk"
+    allowed = extract[extract.index("--allowedTools") + 1:extract.index("--add-dir")]
+    assert "Write(//%s/**)" % mem in allowed and "Edit(//%s/**)" % mem in allowed
+    assert not any(t.startswith("Bash") for t in allowed)
+    assert "Bash" not in extract[extract.index("--tools") + 1].split(",")
+    check = next(a for a in argvs if a[0] == "check")
+    assert "--permission-mode" not in check and check[check.index("--tools") + 1] == ""

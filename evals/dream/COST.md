@@ -16,10 +16,11 @@ plus one reviewer call per `checks.json` item. The first-run reorganization is s
 | Part | Calls | Cap each | Worst case |
 | - | - | - | - |
 | Extract | 6 | $5 | $30 |
-| Reviewer (assume at most 2 items per run) | 12 | $1 | $12 |
+| Reviewer (assumed at most 2 `checks.json` items per run) | 12 | $1 | $12 |
 | Batch | | | $42 |
 
-Worst case $42 notional.
+Worst case $42 notional. This assumes no run writes more than 2 `checks.json` items; a run with more would
+exceed it, so the first run's `checks.json` item counts are checked against the assumption before the batch is repeated.
 
 ## Expected
 

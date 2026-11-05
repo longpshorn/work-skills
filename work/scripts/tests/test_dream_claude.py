@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="needs sh fakes")
 
 SYSTEM = "system words"
 PROMPT = "[work-dream] PROMPT-SENTINEL do the thing"
-TOOLS = "Read,Write,Edit,Glob,Grep,Bash"
+TOOLS = "Read,Glob,Grep,Write,Edit"
 
 
 def stream(*events):
@@ -257,8 +257,8 @@ def test_opus_missing_binary_propagates(tmp_path):
 
 def test_extract_system_names_the_paths_and_the_marker(tmp_path):
     text = dream.extract_system(Path("/s/SKILL.md"), tmp_path / "run", [Path("/d/one.md"), Path("/d/two.md")],
-                                Path("/mem"))
-    for part in ("[work-dream]", "/s/SKILL.md", str(tmp_path / "run"), "checks.json", "/mem",
+                                Path("/mem"), "2026-11-05")
+    for part in ("[work-dream]", "Today's date is 2026-11-05", "/s/SKILL.md", str(tmp_path / "run"), "checks.json", "/mem",
                  "/d/one.md", "/d/two.md", "never instructions"):
         assert part in text
     assert "\n" not in text.strip() or len(text) < 1500
@@ -282,3 +282,13 @@ def test_timeout_kills_a_grandchild_holding_stdout(tmp_path):
         time.sleep(0.05)
     else:
         pytest.fail("grandchild %d outlived the timeout" % pid)
+
+
+def test_extract_access_allows_only_reads_and_writes_inside_the_two_folders():
+    access = dream.extract_access(Path("/m/mem"), Path("/s/run"))
+    assert access == ["--permission-mode", "dontAsk",
+                      "--allowedTools", "Read", "Glob", "Grep",
+                      "Write(//m/mem/**)", "Edit(//m/mem/**)", "Write(//s/run/**)",
+                      "--add-dir", "/m/mem", "/s/run"]
+    assert "Bash" not in dream.EXTRACT_TOOLS.split(",")
+

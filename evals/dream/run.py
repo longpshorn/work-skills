@@ -97,6 +97,8 @@ def run_arm(scenario: str, arm: str, workdir: Path, model: Optional[str] = None,
         raise PaidRunRefused("a run calls the real model and is paid; pass --confirm-paid")
     if arm not in manifest()["arms"]:
         raise ValueError("unknown arm %s" % arm)
+    if model is not None and model not in manifest()["models"]:
+        raise ValueError("model %s is not in fixtures.json" % model)
     claude = shutil.which("claude")
     if not claude:
         raise RuntimeError("claude was not found on PATH")
@@ -107,7 +109,30 @@ def run_arm(scenario: str, arm: str, workdir: Path, model: Optional[str] = None,
                           capture_output=True, text=True)
     (workdir / "run.log").write_text("exit %d\n--- stdout\n%s\n--- stderr\n%s\n"
                                      % (done.returncode, done.stdout, done.stderr), encoding="utf-8")
+    (workdir / "completion.json").write_text(json.dumps(
+        {"exit_code": done.returncode, "extract_ok": extract_succeeded(workdir)}), encoding="utf-8")
     return memory
+
+
+def extract_succeeded(workdir: Path) -> bool:
+    """The extract stage's stream log ends in a successful result event."""
+    folder = run_dir_of(workdir)
+    log = folder / "extract.jsonl" if folder else None
+    if not log or not log.is_file():
+        return False
+    result = None
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            result = event
+    return bool(result) and result.get("subtype") == "success" and not result.get("is_error")
+
+
+def completion(workdir: Path) -> dict:
+    return json.loads((Path(workdir) / "completion.json").read_text(encoding="utf-8"))
 
 
 def run_dir_of(workdir: Path) -> Optional[Path]:
@@ -133,6 +158,10 @@ def main(argv: List[str]) -> int:
     args = parser.parse_args(argv)
     scenarios, arms = args.scenario or ids, args.arm or fixtures["arms"]
     models = args.model or fixtures["models"][:1]
+    unknown = [m for m in models if m not in fixtures["models"]]
+    if unknown:
+        print("run.py: model %s is not in fixtures.json" % ", ".join(unknown), file=sys.stderr)
+        return 2
     lines = plan(scenarios, arms, models)
     if args.dry_run:
         print("planned runs (no model called):")
@@ -142,7 +171,8 @@ def main(argv: List[str]) -> int:
         print("run.py: these runs call the real model and are paid; pass --confirm-paid (or --dry-run)",
               file=sys.stderr)
         return 2
-    if not args.out or ROOT in Path(args.out).resolve().parents:
+    out_path = Path(args.out).resolve() if args.out else None
+    if out_path is None or out_path == ROOT or ROOT in out_path.parents:
         print("run.py: --out is required and must be outside the repo", file=sys.stderr)
         return 2
     import grade
@@ -155,14 +185,20 @@ def main(argv: List[str]) -> int:
                 if workdir.exists():
                     shutil.rmtree(workdir)
                 memory = run_arm(scenario, arm, workdir, model, confirm_paid=True)
+                done = completion(workdir)
+                finished = done["exit_code"] == 0 and done["extract_ok"]
                 checks = grade.grade(HERE / "scenarios" / scenario, memory, workdir / "CLAUDE.md",
-                                     run_dir_of(workdir))
+                                     run_dir_of(workdir)) if finished else None
                 (workdir / "result.json").write_text(json.dumps(
-                    {"scenario": scenario, "arm": arm, "model": model, "checks": checks}, indent=2) + "\n",
-                    encoding="utf-8")
-                print("%s %s: %s" % (scenario, arm, "pass" if all(checks.values()) else
-                                     "fail " + ",".join(k for k, v in checks.items() if not v)))
-                code |= 0 if arm == "baseline" or all(checks.values()) else 1
+                    {"scenario": scenario, "arm": arm, "model": model, "completion": done,
+                     "graded": finished, "checks": checks}, indent=2) + "\n", encoding="utf-8")
+                if checks is None:
+                    print("%s %s: not graded (the run did not complete: exit %d, extract %s)" % (
+                        scenario, arm, done["exit_code"], "ok" if done["extract_ok"] else "failed"))
+                else:
+                    print("%s %s: %s" % (scenario, arm, "pass" if all(checks.values()) else
+                                         "fail " + ",".join(k for k, v in checks.items() if not v)))
+                code |= 0 if arm == "baseline" and checks is not None or checks and all(checks.values()) else 1
     return code
 
 
