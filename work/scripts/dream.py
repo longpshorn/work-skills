@@ -1,9 +1,11 @@
 """Nightly memory consolidation ("dream") for work.py: config, paths and subcommand wiring."""
 
 import copy
+import datetime as dt
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,10 +104,15 @@ def add_parsers(sub):
         "dream-status": "show the last run and the next gate",
         "dream-install": "install the nightly schedule",
     }
-    return {name: sub.add_parser(name, help=helps[name]) for name in COMMANDS}
+    parsers = {name: sub.add_parser(name, help=helps[name]) for name in COMMANDS}
+    parsers["dream-gather"].add_argument("--since", help="ISO time bounding a first run (default: now minus first_run_days)")
+    parsers["dream-gather"].add_argument("--out", help="digest folder (default: <state>/digests)")
+    return parsers
 
 
 def run_command(args):
+    if args.cmd == "dream-gather":
+        return _gather_command(args)
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
 
@@ -236,3 +243,115 @@ def read_turns(path, after_uuid, agent_patterns):
         if seen:
             turns = turns[seen[0] + 1:]
     return turns, last
+
+
+OWN_MARKERS = ("[work-dream]", "[headless-job]")
+FLAG_PATTERNS = {
+    "correction": r"\b(?:no|don't|dont|that's wrong|actually|stop)\b",
+    "confirmation": r"\b(?:yes exactly|perfect|that's right)\b",
+    "remember": r"\bremember\b",
+    "rule": r"\b(?:always|never|from now on)\b",
+    "decision": r"\b(?:decided|let's go with|we'll use)\b",
+}
+
+
+def flag_text(text):
+    """Heuristic annotations for a typed message; they never filter anything."""
+    lowered = text.lower().replace("\u2019", "'")
+    return [name for name, pattern in FLAG_PATTERNS.items() if re.search(pattern, lowered)]
+
+
+def repo_of(cwd):
+    """The main checkout of the repository holding cwd, or None."""
+    if not cwd or not os.path.isdir(cwd):
+        return None
+    try:
+        done = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir"], capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = done.stdout.strip()
+    if done.returncode != 0 or not out:
+        return None
+    common = (Path(cwd) / out).resolve()
+    return str(common.parent if common.name == ".git" else common)
+
+
+def _indent(text):
+    return text.replace("\n", "\n  ")
+
+
+def _reply_tag(text):
+    verified = re.search(r"\bVerified\b", text) and re.search(r"`[^`\n]+`", text)
+    return "[verified-outcome]" if verified else "[context-only]"
+
+
+def _digest(header, turns, agent_session):
+    lines = ["%s: %s" % pair for pair in header]
+    for turn in turns:
+        if turn.role == "claude":
+            lines.append("[%s] %s CLAUDE-FINAL: %s" % (turn.uuid, _reply_tag(turn.text), _indent(turn.text)))
+        elif not (agent_session and "agent_session" in turn.flags):
+            flags = flag_text(turn.text)
+            tag = " [%s]" % ",".join(flags) if flags else ""
+            lines.append("[%s]%s USER: %s" % (turn.uuid, tag, _indent(turn.text)))
+    return "\n".join(lines) + "\n"
+
+
+def _is_own_run(turns):
+    first = next((t for t in turns if t.role == "user"), None)
+    return bool(first) and any(marker in first.text for marker in OWN_MARKERS)
+
+
+def gather(highwater, since, now, out_dir, cfg):
+    """Digest every ended conversation with new turns; returns one record per digest written."""
+    idle = cfg["caps"]["idle_hours"] * 3600
+    patterns = cfg.get("agent_prompts") or []
+    results = []
+    for path in sorted(projects_dir().glob("*/*.jsonl")):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        mark = highwater.get(str(path))
+        if now.timestamp() - mtime < idle or mtime <= (mark["mtime"] if mark else since.timestamp()):
+            continue
+        turns, last_uuid = read_turns(path, None, patterns)
+        if not turns or _is_own_run(turns):
+            continue
+        agent_session = turns[0].role == "user" and "agent_session" in turns[0].flags
+        if mark and mark.get("uuid"):
+            seen = [i for i, t in enumerate(turns) if t.uuid == mark["uuid"]]
+            if seen:
+                turns = turns[seen[0] + 1:]
+        if not any(t.role == "user" and not (agent_session and "agent_session" in t.flags) for t in turns):
+            continue
+        cwd = next((t.cwd for t in turns if t.cwd), "")
+        repo = repo_of(cwd)
+        first, last = turns[0].timestamp, turns[-1].timestamp
+        header = [("session", path.stem), ("project", path.parent.name), ("cwd", cwd or "none"),
+                  ("repo", repo or "none"), ("span", "%s .. %s" % (first, last))]
+        if agent_session:
+            header.append(("agent-session", "yes"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / (path.stem + ".md")
+        target.write_text(_digest(header, turns, agent_session), encoding="utf-8")
+        results.append({"session": path.stem, "project": path.parent.name, "cwd": cwd or None, "repo": repo,
+                        "digest": target.read_text(encoding="utf-8"), "path": str(target),
+                        "last_uuid": last_uuid, "mtime": mtime, "first": first, "last": last,
+                        "agent_session": agent_session})
+    return results
+
+
+def _gather_command(args):
+    try:
+        cfg = load_config()
+    except ConfigError as exc:
+        print("work.py: %s" % exc, file=sys.stderr)
+        return 1
+    now = dt.datetime.now()
+    raw = args.since.replace("Z", "+00:00") if args.since else None
+    since = dt.datetime.fromisoformat(raw) if raw else now - dt.timedelta(days=cfg["caps"]["first_run_days"])
+    out_dir = Path(args.out) if args.out else state_dir() / "digests"
+    print(json.dumps(gather({}, since, now, out_dir, cfg), indent=2))
+    return 0
