@@ -7,7 +7,7 @@ Claude Code skills for keeping track of ongoing work across sessions. Each works
 | `/work:new <area>/<name>` | Start tracking a workstream. On a machine with no store yet, it creates one first. |
 | `/work:resume [name]` | Find a workstream (by name, or by the repo you're in), check what changed since last time, and brief you on the next step. Read-only. |
 | `/work:checkpoint` | Log this session's decisions and results, update the next step, and commit, without ending the session. |
-| `/work:wrap` | Checkpoint, surface loose ends (uncommitted work, changed sources), propose memory updates (anything missed is picked up by the nightly dream run), archive the workstream if it's done, and hand back the resume command. |
+| `/work:wrap` | Checkpoint, surface loose ends (uncommitted work, changed sources), propose memory updates (when the nightly dream run is installed, it picks up anything missed), archive the workstream if it's done, and hand back the resume command. |
 | `/work:standup` | Every workstream at a glance: blocked, stale, loose ends, and the top five next steps. It adds one line when the nightly dream run is failing or has gone quiet. |
 | `/work:dream` | The nightly memory run: consolidates Claude's auto-memory folder from your recent conversations. Normally launched by the scheduler, not by hand. See [Nightly dream](#nightly-dream). |
 
@@ -48,8 +48,8 @@ The path must be absolute or start with `~`; the helper refuses a relative one. 
 
 Know what you are installing:
 
-- **It edits memory unattended.** Nobody reviews a run before it lands. The memory folder is its own local git repo, with a commit before and after every run, so any run can be reverted.
-- **It opens merge requests but never merges.** A fact about one repo can be proposed as a change to that repo's `CLAUDE.md` or `AGENTS.md`, but only for a repo you have allowed with `"promote": true`. The run pushes a branch and opens one merge request per repo for you to review; it never merges and never pushes to the default branch. A proposal is deferred when your checkout of the file differs from the branch it would land on. Facts about you go only to your global `CLAUDE.md`, which the run edits directly.
+- **It edits memory unattended.** Nobody reviews a run before it lands. The memory folder is its own local git repo, committed before and after each run that changes anything, and a failed run is reset, so any run can be reverted.
+- **It opens merge requests (pull requests on GitHub) but never merges.** A fact about one repo can be proposed as a change to that repo's `CLAUDE.md` or `AGENTS.md`, but only for a repo you have allowed with `"promote": true`. The run pushes a branch and opens one merge request per repo for you to review; it never merges and never pushes to the default branch. A proposal is deferred when your checkout of the file differs from the branch it would land on. Facts about you go only to your global `CLAUDE.md`, which the run edits directly.
 - **Paid models run nightly on your plan.** Each run starts a Sonnet extraction stage and an Opus check per reviewed change, each with turn, time and dollar caps. A night with fewer than `min_conversations` ended conversations makes no model calls. The runs leave no session transcript, so they never appear in tomorrow's digest.
 
 The run keeps its own state (`run.log`, digests, a lock) in `~/.local/state/work-dream`. It reads transcripts in `~/.claude/projects` and never sends them anywhere but the models above.
@@ -62,7 +62,11 @@ macOS only (the scheduler is a LaunchAgent). The memory folder is `autoMemoryDir
 sh "<plugin>/scripts/work-tools" dream-install --init-memory --load
 ```
 
-`dream-install` writes the private config `~/.config/work/dream.json` from the plugin's `dream.example.jsonc` if you have none (it never overwrites one), writes a launcher that finds the installed `work` plugin at run time so plugin updates need no reinstall, and writes `~/Library/LaunchAgents/com.work.dream.plist`. `--init-memory` makes the memory folder a git repo and creates the global `CLAUDE.md` if missing; `--load` loads the LaunchAgent with `launchctl`. Run it again after changing `schedule`; it is idempotent.
+`dream-install` writes the private config `~/.config/work/dream.json` from the plugin's `dream.example.jsonc` if you have none (it never overwrites one), writes a launcher that finds the installed `work` plugin at run time so plugin updates need no reinstall, and writes `~/Library/LaunchAgents/com.work.dream.plist`. `--init-memory` makes the memory folder a git repo and creates the global `CLAUDE.md` if missing; `--load` loads the LaunchAgent with `launchctl`. It is idempotent. After changing `schedule`, run `dream-install --load` again: without `--load` the loaded agent keeps the old time.
+
+### Turn it off
+
+`launchctl bootout gui/$(id -u)/com.work.dream` stops the schedule. To uninstall, also delete `~/Library/LaunchAgents/com.work.dream.plist`. Removing `~/.local/state/work-dream` and `~/.config/work/dream.json` is optional. The memory folder's git history stays.
 
 ### Config
 

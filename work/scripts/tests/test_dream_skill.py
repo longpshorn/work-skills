@@ -169,3 +169,9 @@ def test_standup_shows_dream_status():
 def test_store_readme_lists_dream_among_skills():
     text = (PLUGIN / "templates" / "store-README.md").read_text(encoding="utf-8")
     assert "`/work:dream`" in next(line for line in text.splitlines() if line.startswith("Skills:"))
+
+
+def test_readme_says_how_to_turn_it_off():
+    text = flat((REPO / "README.md").read_text(encoding="utf-8"))
+    assert "launchctl bootout" in text and "com.work.dream.plist" in text
+    assert "dream-install --load" in text

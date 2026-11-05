@@ -1,7 +1,7 @@
 // Copy to ~/.config/work/dream.json (full-line // comments are allowed).
 {
-  // Folder holding MEMORY.md; omit to use autoMemoryDirectory from ~/.claude/settings.json.
-  "memory_dir": "~/.claude/memory",
+  // Folder holding MEMORY.md. Leave this commented out and autoMemoryDirectory from ~/.claude/settings.json applies; set it only to override.
+  // "memory_dir": "~/.claude/memory",
   // The user-level instructions file that promotions may be added to.
   "global_claude_md": "~/.claude/CLAUDE.md",
   // Models for the extraction stage and for each verification check.

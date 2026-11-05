@@ -66,5 +66,5 @@ def test_cli_dispatch_needs_no_work_store(dream_env, monkeypatch, tmp_path):
 def test_example_config_parses():
     text = EXAMPLE.read_text(encoding="utf-8")
     data = json.loads(dream.strip_comments(text))
-    assert set(data) == set(dream.DEFAULTS) | {"memory_dir", "global_claude_md"}
+    assert set(data) == set(dream.DEFAULTS) | {"global_claude_md"}
     assert not re.search(r"[A-Z]{2,}-\d+", text)

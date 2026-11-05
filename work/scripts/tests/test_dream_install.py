@@ -185,3 +185,9 @@ def test_load_ignores_a_failing_bootout_but_reports_a_failing_bootstrap(env, cap
 def test_load_reports_a_missing_launchctl_instead_of_crashing(env, capsys):
     assert dream.dream_install(False, True, launchctl=str(env.bin / "absent"), home=env.home) == 1
     assert "launchctl" in capsys.readouterr().out
+
+
+def test_fresh_install_leaves_memory_dir_to_auto_memory_directory(env):
+    assert install(env, init_memory=True) == 0
+    assert dream.load_config(env.home)["memory_dir"] == env.memory
+    assert (env.memory / ".git").is_dir()
