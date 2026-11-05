@@ -16,7 +16,7 @@ NOTE = "---\nname: {n}\ndescription: d\nmetadata:\n  type: feedback\n---\nBody\n
 
 def memory_dir(tmp_path):
     root = tmp_path / "mem"
-    root.mkdir()
+    root.mkdir(parents=True)
     return root
 
 
@@ -243,10 +243,130 @@ def test_apply_time_failures_are_caught_in_validation(tmp_path):
     assert (mem / "ok.md").exists() and not (mem / "_retired").exists()
 
 
-def test_paths_are_rechecked_at_write_time(tmp_path, monkeypatch):
+def snapshot(root):
+    return {
+        str(p.relative_to(root)): (p.read_bytes() if p.is_file() else None)
+        for p in sorted(root.rglob("*"))
+    }
+
+
+def untouched(ops, mem, setup=None, exc=ValueError):
+    """The batch (good write first) is refused and the folder is byte-identical."""
+    if setup:
+        setup(mem)
+    before = snapshot(mem)
+    with pytest.raises(exc):
+        dream.apply_ops([w("memory", "good.md")] + ops, mem, None, TODAY, CAPS)
+    assert snapshot(mem) == before
+
+
+def retire(name):
+    return {"op": "retire", "path": name, "superseded_by": "n"}
+
+
+def idx(line="- [a](a.md)"):
+    return {"op": "index", "section": "S", "line": line}
+
+
+def test_unusual_line_breaks_retire_cleanly_and_unencodable_content_is_refused(tmp_path):
+    for n, raw in enumerate((b"---\x0bname: a\x0b---\nbody\n", b"---\rname: a\r---\rbody\r")):
+        mem = memory_dir(tmp_path / str(n))
+        (mem / "a.md").write_bytes(raw)
+        dream.apply_ops([retire("a.md")], mem, None, TODAY, CAPS)
+        meta = dream.parse_memory((mem / "_retired" / "a.md").read_text(encoding="utf-8"))
+        assert meta["superseded_by"] == "n" and not (mem / "a.md").exists()
+    untouched([w("memory", "s.md", "\ud800")], memory_dir(tmp_path / "3"))
+
+
+def test_file_directory_conflicts_leave_everything_untouched(tmp_path):
+    untouched([w("memory", "d/x.md"), w("memory", "d")], memory_dir(tmp_path / "1"))
+    untouched([w("memory", "a.md"), w("memory", "a.md/b.md")], memory_dir(tmp_path / "2"))
+    untouched(
+        [w("memory", "f.md/b.md")],
+        memory_dir(tmp_path / "3"),
+        lambda m: (m / "f.md").write_text("x"),
+    )
+
+
+def test_bad_index_file_leaves_everything_untouched(tmp_path):
+    def note(m):
+        (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+
+    def binary_index(m):
+        note(m)
+        (m / "MEMORY.md").write_bytes(b"# I\n\xff\n")
+
+    untouched([retire("a.md")], memory_dir(tmp_path / "1"), binary_index)
+    untouched([idx()], memory_dir(tmp_path / "2"), binary_index)
+    untouched([idx()], memory_dir(tmp_path / "3"), lambda m: (m / "MEMORY.md").mkdir())
+
+
+def test_retire_whose_destination_was_written_earlier_is_refused(tmp_path):
     mem = memory_dir(tmp_path)
+    untouched(
+        [w("memory", "_retired/a.md", "MINE"), retire("a.md")],
+        mem,
+        lambda m: (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8"),
+    )
+
+
+def test_retire_then_rewrite_the_same_name_is_applied(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+    dream.apply_ops([retire("a.md"), w("memory", "a.md", "new")], mem, None, TODAY, CAPS)
+    assert (mem / "a.md").read_text() == "new"
+    assert (mem / "_retired" / "a.md").exists()
+
+
+def test_a_failing_write_rolls_back_the_earlier_ones(tmp_path, monkeypatch):
+    mem = memory_dir(tmp_path)
+    (mem / "keep.md").write_text("old", encoding="utf-8")
+    before = snapshot(mem)
+    real = dream._put
     calls = []
-    real = dream.safe_path
-    monkeypatch.setattr(dream, "safe_path", lambda r, p: calls.append(p) or real(r, p))
-    dream.apply_ops([w("memory", "a.md")], mem, None, TODAY, CAPS)
-    assert calls.count("a.md") == 2
+
+    def flaky(path, data):
+        calls.append(path)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        real(path, data)
+
+    monkeypatch.setattr(dream, "_put", flaky)
+    ops = [w("memory", "keep.md", "new"), w("memory", "sub/dir/b.md"), w("memory", "c.md")]
+    with pytest.raises(OSError):
+        dream.apply_ops(ops, mem, None, TODAY, CAPS)
+    assert len(calls) == 2
+    assert snapshot(mem) == before
+
+
+def test_index_lines_accept_only_the_plain_form(tmp_path):
+    mem = memory_dir(tmp_path)
+    for bad in (
+        "- [a](<../x.md>)",
+        "[1]: ../../etc/passwd",
+        "- [a](a.md) <../../etc/x.md>",
+        "- [a](C:secret.md)",
+        "- [a](https:evil.md)",
+        "- [a](a.md) [b](b.md)",
+        "- [a](a.md) [1]: ../x",
+        "- [a](a.md \"t\")",
+        "just text",
+    ):
+        untouched([idx(bad)], mem)
+    dream.apply_ops([idx("- [a](a.md) - a hook, with (parens)")], mem, None, TODAY, CAPS)
+
+
+def test_hidden_directory_reached_through_a_symlink_is_refused(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / ".git" / "hooks").mkdir(parents=True)
+    try:
+        os.symlink(".git", str(mem / "g"))
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    untouched([w("memory", "g/hooks/pre-commit")], mem, None, dream.UnsafePath)
+
+
+def test_unprintable_path_segments_are_refused(tmp_path):
+    mem = memory_dir(tmp_path)
+    for path in ("a\x0bb.md", "a\u202eb.md", "d\x85/x.md"):
+        untouched([w("memory", path)], mem, None, dream.UnsafePath)

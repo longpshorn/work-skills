@@ -498,14 +498,18 @@ def _scalar(raw):
     return raw.strip("\"'")
 
 
-def parse_memory(text):
-    lines = text.splitlines()
+def _frontmatter_end(lines):
     if not lines or lines[0].strip() != "---":
         raise FrontmatterError("missing frontmatter")
     try:
-        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+        return next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
     except StopIteration:
         raise FrontmatterError("unterminated frontmatter")
+
+
+def parse_memory(text):
+    lines = text.splitlines()
+    end = _frontmatter_end(lines)
     meta = {}
     nested = None
     for line in lines[1:end]:
@@ -618,17 +622,15 @@ def safe_path(root, rel):
 
 
 _INSTRUCTION_FILES = ("claude.md", "agents.md")
-_LINK = re.compile(r"\]\(([^)]*)\)")
-_BARE_MD = re.compile(r"^[^/\\]+\.md$")
+_LINK_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
+_SEGMENT_SPLIT = re.compile(r"[/\\]")
 
 
-def _read(path):
-    return path.read_bytes().decode("utf-8")
-
-
-def _put(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(text.encode("utf-8"))
+def _decode(data, what):
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("%s is not UTF-8: %s" % (what, exc))
 
 
 def _single_line(value, what):
@@ -639,19 +641,20 @@ def _single_line(value, what):
 
 
 def _stamp(text, fields):
-    lines = text.split("\n")
-    parse_memory(text)
-    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    lines = text.splitlines()
+    end = _frontmatter_end(lines)
     keys = tuple(k + ":" for k in fields)
     kept = [l for l in lines[1:end] if not l.startswith(keys)]
     stamped = ["%s: %s" % (k, v) for k, v in fields.items()]
-    return "\n".join([lines[0]] + kept + stamped + lines[end:])
+    return "\n".join([lines[0]] + kept + stamped + lines[end:]) + "\n"
 
 
-def _not_dir(full, rel):
-    if full.is_dir():
-        raise ValueError("write op names a directory: %s" % rel)
-    return full
+def _check_index_line(line):
+    match = _INDEX_LINE.match(line)
+    if not match or not _LINK_TARGET.match(match.group("file")):
+        raise ValueError("index line must be '- [title](name.md)...': %s" % line)
+    if line.count("](") != 1 or "<" in line or "]:" in line:
+        raise ValueError("index line carries extra link syntax: %s" % line)
 
 
 def _write_path(op, memory_dir, target_root, caps):
@@ -665,17 +668,20 @@ def _write_path(op, memory_dir, target_root, caps):
     if base is None:
         raise ValueError("write op names a target root but none is available")
     full = safe_path(base, rel)
+    parts = _SEGMENT_SPLIT.split(rel) + list(full.relative_to(base.resolve()).parts)
+    if not all(part.isprintable() for part in parts):
+        raise UnsafePath("unprintable path segment: %r" % rel)
     if op["root"] == "memory":
-        if any(part.startswith(".") for part in rel.replace("\\", "/").split("/")):
+        if any(part.startswith(".") for part in parts):
             raise UnsafePath("hidden path segment: %s" % rel)
-        return _not_dir(full, rel)
+        return full
     if rel.replace("\\", "/").split("/")[-1].casefold() not in _INSTRUCTION_FILES:
         raise UnsafePath("target writes are limited to CLAUDE.md and AGENTS.md: %s" % rel)
     if (base.resolve() / rel).is_symlink():
         raise UnsafePath("instruction file is a symlink: %s" % rel)
     if len(op["content"].splitlines()) > caps["claude_md_lines"]:
         raise TooLong("%s would exceed %d lines" % (rel, caps["claude_md_lines"]))
-    return _not_dir(full, rel)
+    return full
 
 
 def _retire_path(op, memory_dir):
@@ -691,9 +697,56 @@ def _retire_path(op, memory_dir):
     return full
 
 
-def _validate_ops(ops, memory_dir, target_root, caps):
-    """Vet every op, or raise before anything is written."""
-    written = {}
+class _Overlay:
+    """Final file contents planned in memory; None marks a deleted file."""
+
+    def __init__(self):
+        self.planned = {}
+        self.bases = {}
+
+    def is_file(self, path):
+        if path in self.planned:
+            return self.planned[path] is not None
+        return path.is_file()
+
+    def is_dir(self, path):
+        if any(path in key.parents for key, data in self.planned.items() if data is not None):
+            return True
+        return path not in self.planned and path.is_dir()
+
+    def read(self, path):
+        if path in self.planned:
+            return self.planned[path]
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            raise ValueError("cannot read %s: %s" % (path.name, exc))
+
+    def put(self, path, text, base):
+        if self.is_dir(path):
+            raise ValueError("write op names a directory: %s" % path.name)
+        for parent in path.parents:
+            if parent == base:
+                break
+            if self.is_file(parent):
+                raise ValueError("a file is in the way of %s" % path.name)
+        try:
+            self.planned[path] = text.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("content for %s is not encodable: %s" % (path.name, exc))
+        self.bases[path] = base
+
+    def delete(self, path, base):
+        self.planned[path] = None
+        self.bases[path] = base
+
+
+def _plan(ops, memory_dir, target_root, today, caps):
+    """Compute every final file in memory; raises before anything is touched."""
+    over = _Overlay()
+    root = memory_dir.resolve()
+    index = safe_path(memory_dir, "MEMORY.md")
+    touched = []
     retired = set()
     for op in ops:
         if not isinstance(op, dict):
@@ -701,40 +754,85 @@ def _validate_ops(ops, memory_dir, target_root, caps):
         kind = op.get("op")
         if kind == "write":
             full = _write_path(op, memory_dir, target_root, caps)
-            if op["root"] == "memory":
-                written[full] = op["content"]
+            over.put(full, op["content"], root if op["root"] == "memory" else target_root.resolve())
+            touched.append(op["path"])
         elif kind == "retire":
             full = _retire_path(op, memory_dir)
             _single_line(op.get("superseded_by"), "superseded_by")
-            if full.name.casefold() in retired:
-                raise ValueError("retired twice: %s" % full.name)
-            if safe_path(memory_dir, "_retired/" + full.name).exists():
-                raise ValueError("already retired: %s" % full.name)
-            if full in written:
-                text = written[full]
-            elif full.is_file():
-                try:
-                    text = _read(full)
-                except (OSError, ValueError) as exc:
-                    raise ValueError("cannot read %s: %s" % (full.name, exc))
-            else:
+            if not over.is_file(full):
                 raise ValueError("retire op names a missing file: %s" % op["path"])
-            parse_memory(text)
+            dest = safe_path(memory_dir, "_retired/" + full.name)
+            if full.name.casefold() in retired or over.is_file(dest) or over.is_dir(dest):
+                raise ValueError("already retired: %s" % full.name)
+            text = _decode(over.read(full), full.name)
+            fields = {"superseded_by": op["superseded_by"], "retired": today.isoformat()}
+            stamped = _stamp(text, fields)
             retired.add(full.name.casefold())
+            over.delete(full, root)
+            over.put(dest, stamped, root)
+            if over.is_file(index):
+                current = _decode(over.read(index), "MEMORY.md")
+                over.put(index, _drop_index_line(current, full.name), root)
+            touched.append(op["path"])
         elif kind == "index":
             _single_line(op.get("section"), "section")
             _single_line(op.get("line"), "line")
-            for link in _LINK.findall(op["line"]):
-                if not _BARE_MD.match(link) or ".." in link:
-                    raise ValueError("index line may link only to a bare .md name: %s" % link)
+            _check_index_line(op["line"])
+            current = _decode(over.read(index), "MEMORY.md") if over.is_file(index) else ""
+            over.put(index, _insert_in_section(current, op["section"], op["line"]), root)
+            touched.append("MEMORY.md")
         else:
             raise ValueError("unknown op: %r" % (kind,))
+    return over, touched
+
+
+def _put(path, data):
+    path.write_bytes(data)
+
+
+def _restore(prior, made_dirs):
+    for path, data in reversed(prior):
+        try:
+            if data is None:
+                if path.exists():
+                    path.unlink()
+            else:
+                path.write_bytes(data)
+        except OSError:
+            pass
+    for path in made_dirs:
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
+def _commit(over):
+    prior = []
+    made_dirs = []
+    deletes = [p for p, data in over.planned.items() if data is None]
+    writes = [(p, data) for p, data in over.planned.items() if data is not None]
+    try:
+        for path in deletes:
+            prior.append((path, path.read_bytes() if path.is_file() else None))
+            path.unlink()
+        for path, data in writes:
+            base = over.bases[path]
+            rel = str(path.relative_to(base))
+            if safe_path(base, rel) != path:
+                raise UnsafePath("path changed before write: %s" % rel)
+            prior.append((path, path.read_bytes() if path.is_file() else None))
+            missing = [d for d in path.parents if not d.exists() and base in d.parents]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            made_dirs.extend(missing)
+            _put(path, data)
+    except BaseException:
+        _restore(prior, made_dirs)
+        raise
 
 
 def _insert_in_section(text, section, line):
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
+    lines = text.splitlines()
     heading = "## " + section.strip()
     start = next((i for i, l in enumerate(lines) if l.strip() == heading), None)
     if start is None:
@@ -753,36 +851,18 @@ def _drop_index_line(text, name):
 
 
 def apply_ops(ops, memory_dir, target_root, today, caps):
-    _validate_ops(ops, memory_dir, target_root, caps)
-    touched = []
-    index_path = safe_path(memory_dir, "MEMORY.md")
-    for op in ops:
-        if op["op"] == "write":
-            _put(_write_path(op, memory_dir, target_root, caps), op["content"])
-            touched.append(op["path"])
-        elif op["op"] == "retire":
-            full = _retire_path(op, memory_dir)
-            dest = safe_path(memory_dir, "_retired/" + full.name)
-            fields = {"superseded_by": op["superseded_by"], "retired": today.isoformat()}
-            _put(dest, _stamp(_read(full), fields))
-            full.unlink()
-            if index_path.is_file():
-                _put(index_path, _drop_index_line(_read(index_path), full.name))
-            touched.append(op["path"])
-        else:
-            current = _read(index_path) if index_path.is_file() else ""
-            _put(index_path, _insert_in_section(current, op["section"], op["line"]))
-            touched.append("MEMORY.md")
+    over, touched = _plan(ops, memory_dir, target_root, today, caps)
+    _commit(over)
     return touched
 
 
 def mark_promoted(memory_dir, memory_rel, promoted_to):
     path = safe_path(memory_dir, memory_rel)
-    text = _read(path)
+    text = _decode(path.read_bytes(), memory_rel)
     if "promoted_to" in parse_memory(text):
         return
     _single_line(promoted_to, "promoted_to")
-    _put(path, _stamp(text, {"promoted_to": promoted_to}))
+    _put(path, _stamp(text, {"promoted_to": promoted_to}).encode("utf-8"))
 
 
 def _check_command(args):
