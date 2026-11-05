@@ -97,6 +97,12 @@ def test_skill_states_the_required_rules():
         "at most 5 promotions",
         "nothing private",
         "repo file",
+        "by a `contradiction` item in `checks.json`, never directly",
+        "every `seen:` and `sources:` entry of the files it absorbs",
+        "`]:`",
+        "quote only the sentence that states what was proven",
+        "`_global/` holds a read-only copy",
+        "instead of retiring it",
     ]
     missing = [phrase for phrase in required if phrase not in text]
     assert missing == []
