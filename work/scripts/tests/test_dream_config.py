@@ -60,7 +60,7 @@ def test_env_overrides_for_paths(dream_env):
 
 def test_cli_dispatch_needs_no_work_store(dream_env, monkeypatch, tmp_path):
     monkeypatch.setenv("WORK_STORE", str(tmp_path / "missing"))
-    assert work.main(["dream-status"]) != 4
+    assert work.main(["dream-status"]) == 0
 
 
 def test_example_config_parses():

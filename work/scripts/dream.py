@@ -113,6 +113,8 @@ def add_parsers(sub):
 def run_command(args):
     if args.cmd == "dream-gather":
         return _gather_command(args)
+    if args.cmd == "dream-status":
+        return _status_command()
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
 
@@ -354,4 +356,130 @@ def _gather_command(args):
     since = dt.datetime.fromisoformat(raw) if raw else now - dt.timedelta(days=cfg["caps"]["first_run_days"])
     out_dir = Path(args.out) if args.out else state_dir() / "digests"
     print(json.dumps(gather({}, since, now, out_dir, cfg), indent=2))
+    return 0
+
+
+def default_state():
+    return {"version": 1, "transcripts": {}, "last_run": None, "last_success": None,
+            "reorganized": False, "open_mrs": {}, "pending_pushes": []}
+
+
+def load_state():
+    path = state_dir() / "state.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("state is not an object")
+    except FileNotFoundError:
+        return default_state()
+    except (OSError, ValueError):
+        try:
+            os.replace(str(path), str(path) + ".bad")
+        except OSError:
+            pass
+        return default_state()
+    return _merge(default_state(), data)
+
+
+def save_state(state):
+    directory = state_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    temp = directory / "state.json.tmp"
+    temp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(str(temp), str(directory / "state.json"))
+
+
+class Busy(Exception):
+    pass
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+    return True
+
+
+class RunLock:
+    """Single-run lock holding the owner's pid; a lock whose pid is gone is taken over."""
+
+    def __enter__(self):
+        directory = state_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = directory / "lock"
+        for _ in range(2):
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                if self._holder_alive():
+                    raise Busy(str(self.path))
+                try:
+                    self.path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            with os.fdopen(fd, "w") as handle:
+                handle.write(str(os.getpid()))
+            return self
+        raise Busy(str(self.path))
+
+    def _holder_alive(self):
+        try:
+            pid = int(self.path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return False
+        return pid > 0 and _pid_alive(pid)
+
+    def __exit__(self, *exc):
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+
+
+def log_line(date, read, counts, mrs, ok, reason=None):
+    tally = " ".join("%s=%d" % (key, counts.get(key, 0)) for key in ("added", "updated", "retired", "promoted"))
+    outcome = "ok" if ok else "failed: %s" % reason
+    return "%s | read=%d | %s | mrs=%s | %s" % (date.isoformat(), read, tally, " ".join(mrs) or "-", outcome)
+
+
+def append_log(line):
+    directory = state_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(str(directory / "run.log"), "a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+
+
+def _last_log_line():
+    try:
+        lines = (state_dir() / "run.log").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    return next((line for line in reversed(lines) if line.strip()), None)
+
+
+def dream_status(today):
+    """One line when the last run failed or no run succeeded for 3 days; None when healthy or never run."""
+    last = _last_log_line()
+    if last is None:
+        return None
+    failed = re.search(r"\| failed: (.*)$", last)
+    if failed:
+        return "dream: last run failed (%s)" % failed.group(1)
+    success = load_state().get("last_success")
+    try:
+        days = (today - dt.date.fromisoformat(success)).days
+    except (TypeError, ValueError):
+        return None
+    return "dream: no successful run in %d days" % days if days >= 3 else None
+
+
+def _status_command():
+    line = dream_status(dt.date.today())
+    if line:
+        print(line)
     return 0
