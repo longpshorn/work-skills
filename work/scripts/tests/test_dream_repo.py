@@ -388,3 +388,14 @@ def test_a_merged_mr_record_does_not_defer_later_promotions(world):
     assert dream._landing_ref(root, state) == "refs/remotes/origin/main"
     dream._require_same_base(root, op("# Team edit\nnew rule\n"), state)
     assert str(root) not in state["open_mrs"]
+
+
+def test_the_worktree_commit_runs_no_repo_hook(world, tmp_path):
+    repo = world["repo"]
+    marker = tmp_path / "hook-ran"
+    for name in ("prepare-commit-msg", "post-commit"):
+        hook = repo / ".git" / "hooks" / name
+        hook.write_text("#!/bin/sh\necho %s >> '%s'\n" % (name, marker))
+        hook.chmod(0o755)
+    assert dream.propose(repo, RULE, op(), "x", TODAY, dream.default_state(), world["cfg"])
+    assert not marker.exists()

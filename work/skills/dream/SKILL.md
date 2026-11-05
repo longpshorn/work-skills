@@ -91,7 +91,7 @@ A few facts matter every time a project is worked on, and belong in an instructi
 Where it goes:
 
 - A fact about the user or how they work goes to the global file: `global_claude_md` in the config (default `~/.claude/CLAUDE.md`). Personal preferences go to the global file only.
-- A fact about one repo's own code, commands, conventions or tooling goes to that repo's top-level `CLAUDE.md` or `AGENTS.md` (whichever it already has; `CLAUDE.md` if neither), and only when the config allows that repo: a `repos` rule with `promote: true` whose `match` is a substring of the repo's origin URL (`dream-run` enforces this, so propose only when the digest's `repo:` plausibly fits a rule). The config is the file `$WORK_DREAM_CONFIG` names, else `~/.config/work/dream.json`. Any other repo's fact stays a memory.
+- A fact about one repo's own code, commands, conventions or tooling goes to that repo's top-level `CLAUDE.md` or `AGENTS.md` (whichever it already has; `CLAUDE.md` if neither), and only when the config allows that repo: a `repos` rule with `promote: true` whose `match` is a substring of the repo's origin URL (`dream-run` enforces this, so propose only when the digest's `repo:` plausibly fits a rule). The config is the config file the system prompt names. Any other repo's fact stays a memory.
 - A fact tied to several repos, or none, stays a memory unless it is about the user.
 
 Nothing private reaches a repo file: nothing about people, strategy, customers or credentials, and none of the user's personal preferences. When in doubt, it stays a memory. Never write a secret or credential into any file.

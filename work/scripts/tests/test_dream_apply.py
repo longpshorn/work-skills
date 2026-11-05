@@ -494,3 +494,12 @@ def test_one_spelling_written_twice_is_allowed(tmp_path):
     dream.apply_ops([w("memory", "b.md", NOTE.format(n="x")), w("memory", "b.md", NOTE.format(n="b"))],
                     mem, None, TODAY, CAPS)
     assert (mem / "b.md").read_text(encoding="utf-8") == NOTE.format(n="b")
+
+
+@pytest.mark.parametrize("spelling", ["_retired/a.md", "_RETIRED/a.md", "_Retired/new.md"])
+def test_memory_writes_into_the_retired_folder_are_refused(tmp_path, spelling):
+    def note(m):
+        (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+
+    untouched([retire("a.md"), w("memory", spelling, NOTE.format(n="forged"))], memory_dir(tmp_path / "1"), note)
+    untouched([w("memory", spelling, NOTE.format(n="forged"))], memory_dir(tmp_path / "2"), note)

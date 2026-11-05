@@ -177,3 +177,9 @@ def test_readme_says_how_to_turn_it_off():
     assert "launchctl disable gui/$(id -u)/com.work.dream" in text
     assert "delete `~/library/launchagents/com.work.dream.plist`" in text
     assert "dream-install --load" in text
+
+
+def test_skill_takes_the_config_path_from_the_system_prompt():
+    text = (Path(__file__).resolve().parents[2] / "skills" / "dream" / "SKILL.md").read_text(encoding="utf-8")
+    assert "WORK_DREAM_CONFIG" not in text
+    assert "the config file the system prompt names" in text

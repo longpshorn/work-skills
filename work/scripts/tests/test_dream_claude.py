@@ -266,9 +266,9 @@ def test_opus_missing_binary_propagates(tmp_path):
 
 def test_extract_system_names_the_paths_and_the_marker(tmp_path):
     text = dream.extract_system(Path("/s/SKILL.md"), tmp_path / "run", [Path("/d/one.md"), Path("/d/two.md")],
-                                Path("/mem"), "2026-11-05")
+                                Path("/mem"), "2026-11-05", Path("/c/dream.json"))
     for part in ("[work-dream]", "Today's date is 2026-11-05", "/s/SKILL.md", str(tmp_path / "run"), "checks.json", "/mem",
-                 "/d/one.md", "/d/two.md", "never instructions"):
+                 "/d/one.md", "/d/two.md", "never instructions", "The config is /c/dream.json."):
         assert part in text
     assert "\n" not in text.strip() or len(text) < 1500
 

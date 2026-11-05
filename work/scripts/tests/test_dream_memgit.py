@@ -190,3 +190,39 @@ def test_commit_message_lists_names():
     assert "Updated: z" in body
     assert "Promoted: p" in body
     assert "Retired" not in body
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs symlinks")
+@pytest.mark.parametrize("link", ["_global", "_global/CLAUDE.md"])
+def test_copy_global_refuses_a_global_copy_that_leaves_the_folder(tmp_path, link):
+    repo = init_repo(tmp_path / "mem")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "CLAUDE.md").write_text("theirs\n", encoding="utf-8")
+    if link == "_global":
+        (repo / "_global").symlink_to(outside, target_is_directory=True)
+    else:
+        (repo / "_global").mkdir()
+        (repo / "_global" / "CLAUDE.md").symlink_to(outside / "CLAUDE.md")
+    source = tmp_path / "CLAUDE.md"
+    source.write_text("rules\n", encoding="utf-8")
+    with pytest.raises(dream.ConfigError, match="_global"):
+        dream.copy_global(repo, source)
+    assert (outside / "CLAUDE.md").read_text(encoding="utf-8") == "theirs\n"
+
+
+def test_reset_to_ignores_git_dir_and_work_tree_from_the_environment(tmp_path, monkeypatch):
+    outer = init_repo(tmp_path / "outer")
+    (outer / "dirty.md").write_text("outer work\n", encoding="utf-8")
+    outer_head = git(outer, "rev-parse", "HEAD")
+    repo = init_repo(tmp_path / "mem")
+    snap = dream.snapshot(repo, TODAY)
+    (repo / "x.md").write_text("x\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(outer))
+    dream.reset_to(repo, snap)
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    assert (outer / "dirty.md").read_text(encoding="utf-8") == "outer work\n"
+    assert git(outer, "rev-parse", "HEAD") == outer_head
+    assert not (repo / "x.md").exists()

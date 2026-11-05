@@ -261,21 +261,20 @@ def test_opus_reject_drops_the_item_and_approve_applies_it(world, verdict, retir
 
 
 def test_promotion_cap_and_unlisted_repo_are_enforced(world):
+    world.cfg["caps"] = {"promotions": 1}
+    world.config()
     talk(world, 3)
-    names = ["p%d" % i for i in range(1, 9)]
-    seed(world, names)
+    seed(world, ["p1", "p2", "p8"])
     other = init_repo(world.tmp / "other", remote="https://example.com/x/other.git")
-    checks = [promotion("p8", str(other))] + [promotion(n, "global", path="%s/CLAUDE.md" % n)
-                                              for n in names[:7]]
+    checks = [promotion("p8", str(other)), promotion("p1", "global"), promotion("p2", "global")]
     world.plan({"extract": {"checks": checks}})
     assert run() == 0
-    promoted = [n for n in names[:7] if "promoted_to" in meta(world, n)]
-    assert promoted == names[:5]
-    assert [n for n in names[:7] if (world.gmd.parent / n / "CLAUDE.md").exists()] == names[:5]
-    assert "promoted_to" not in meta(world, "p8")
+    assert "promoted_to" in meta(world, "p1")
+    assert "promoted_to" not in meta(world, "p2") and "promoted_to" not in meta(world, "p8")
+    assert world.gmd.read_text(encoding="utf-8") == "# Global\n- rule from p1\n"
     assert not (other / "CLAUDE.md").exists()
     line = log_lines(world)[-1]
-    assert "promoted=5" in line and str(other) in line and "| ok" in line
+    assert "promoted=1" in line and "over the cap of 1" in line and str(other) in line and "| ok" in line
 
 
 def test_second_promotion_to_the_same_target_is_deferred(world):
@@ -758,3 +757,21 @@ def test_an_unexpected_error_before_the_snapshot_logs_one_failed_line(world, mon
     assert run() == 1
     lines = log_lines(world)
     assert len(lines) == 1 and "failed: retry exploded" in lines[0] and calls(world) == []
+
+
+def test_a_global_promotion_may_only_write_the_global_file(world):
+    talk(world, 3)
+    seed(world, ["p1"])
+    world.plan({"extract": {"checks": [promotion("p1", "global", path="AGENTS.md")]}})
+    assert run() == 0
+    assert not (world.gmd.parent / "AGENTS.md").exists() and not world.gmd.exists()
+    assert "promoted_to" not in meta(world, "p1")
+    assert "item p1 dropped" in log_lines(world)[-1]
+
+
+def test_extract_stage_is_told_the_config_path(world):
+    talk(world, 3)
+    assert run() == 0
+    argvs = [json.loads(l) for l in (world.calls.parent / "calls.argv").read_text().splitlines()]
+    extract = next(a for a in argvs if a[0] == "extract")
+    assert "The config is %s." % world.env.config in extract[extract.index("--system-prompt") + 1]
