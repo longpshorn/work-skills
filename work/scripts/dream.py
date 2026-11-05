@@ -1063,6 +1063,7 @@ def _check_command(args):
 MR_BODY = ("Automated memory promotion from the nightly dream run: it proposes changes to this "
            "file from what recent sessions learned. Awaiting human review; nothing is merged automatically.")
 _URL = re.compile(r"https?://\S+")
+_NO_HOOKS = ["-c", "core.hooksPath=/dev/null"]
 
 
 def rule_for(origin_url, cfg):
@@ -1087,6 +1088,16 @@ def forge_of(origin_url):
     return None
 
 
+def _origin_url(repo):
+    return _out(repo, ["config", "--get", "remote.origin.url"])
+
+
+def _slug(repo):
+    url = _origin_url(repo)
+    path = url.split("//", 1)[1].split("/", 1)[1] if "//" in url else url.split(":", 1)[-1]
+    return re.sub(r"\.git$", "", path.strip("/"))
+
+
 def _forge(args, cwd):
     try:
         done = subprocess.run(args, cwd=str(cwd), capture_output=True, timeout=GIT_TIMEOUT)
@@ -1099,23 +1110,29 @@ def _forge(args, cwd):
     return done.stdout.decode("utf-8", "replace")
 
 
-def mr_is_open(forge, url):
+def mr_is_open(forge, number, repo):
     if forge == "github":
-        return _forge(["gh", "pr", "view", url, "--json", "state", "-q", ".state"], ".").strip() == "OPEN"
-    return str(json.loads(_forge(["glab", "mr", "view", url, "-F", "json"], ".")).get("state")) == "opened"
+        out = _forge(["gh", "pr", "view", str(number), "--json", "state", "-R", _slug(repo)], repo)
+        want = "OPEN"
+    else:
+        out = _forge(["glab", "mr", "view", str(number), "-F", "json"], repo)
+        want = "opened"
+    try:
+        return str(json.loads(out)["state"]) == want
+    except (ValueError, KeyError, TypeError):
+        raise ConfigError("unreadable merge request state for %s" % number)
 
 
 def create_mr(forge, repo, branch, base, title, body, reviewers):
     reviewers = ",".join(reviewers or [])
     if forge == "github":
-        args = ["gh", "pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body]
-        if reviewers:
-            args += ["--reviewer", reviewers]
+        args = ["gh", "pr", "create", "-R", _slug(repo), "--head", branch, "--base", base,
+                "--title", title, "--body", body]
     else:
         args = ["glab", "mr", "create", "--source-branch", branch, "--target-branch", base,
                 "--title", title, "--description", body, "--yes"]
-        if reviewers:
-            args += ["--reviewer", reviewers]
+    if reviewers:
+        args += ["--reviewer", reviewers]
     found = _URL.findall(_forge(args, repo))
     if not found:
         raise ConfigError("%s printed no merge request URL" % args[0])
@@ -1123,17 +1140,24 @@ def create_mr(forge, repo, branch, base, title, body, reviewers):
 
 
 def _default_branch(repo):
-    for attempt in range(2):
-        done = _git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], check=False)
-        if done.returncode == 0:
-            return done.stdout.decode("utf-8", "replace").strip().split("/", 1)[1]
-        if attempt == 0:
-            _git(repo, ["remote", "set-head", "origin", "--auto"], check=False)
+    done = _git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], check=False)
+    if done.returncode == 0:
+        return done.stdout.decode("utf-8", "replace").strip().split("/", 1)[1]
+    done = _git(repo, ["ls-remote", "--symref", "origin", "HEAD"], check=False)
+    found = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", done.stdout.decode("utf-8", "replace"), re.MULTILINE)
+    if found:
+        return found.group(1)
     raise ConfigError("cannot resolve the default branch of origin")
 
 
-def _has_ref(repo, ref):
-    return _git(repo, ["rev-parse", "-q", "--verify", ref], check=False).returncode == 0
+def _branches(repo, prefix):
+    out = _out(repo, ["for-each-ref", "--format=%(refname)", prefix])
+    return [line[len(prefix):] for line in out.splitlines() if line]
+
+
+def _checked_out(repo):
+    out = _out(repo, ["worktree", "list", "--porcelain"])
+    return [l[len("branch refs/heads/"):] for l in out.splitlines() if l.startswith("branch refs/heads/")]
 
 
 def _fill(pattern, **values):
@@ -1143,80 +1167,118 @@ def _fill(pattern, **values):
     return pattern.format(**values)
 
 
-def _remember_push_failure(state, repo, branch):
-    entry = {"repo": str(repo), "branch": branch}
-    if entry not in state["pending_pushes"]:
-        state["pending_pushes"].append(entry)
+def _guard(repo, branch, base):
+    if branch.casefold() == base.casefold():
+        raise ValueError("refusing to use the default branch %s" % base)
+    if branch.casefold() in [name.casefold() for name in _checked_out(repo)]:
+        raise ValueError("refusing a branch that is checked out in a worktree: %s" % branch)
 
 
-def propose(repo, rule, ops, summary, today, state, cfg):
+def _publish(repo, record, base, title, reviewers, notes):
+    """Push the recorded branch and create its merge request if it has none; returns the URL or None."""
+    branch = record["branch"]
+    refspec = "refs/heads/%s:refs/heads/%s" % (branch, branch)
+    if _git(repo, _NO_HOOKS + ["push", "-q", "origin", refspec], check=False).returncode != 0:
+        notes.append("push of %s failed; it is retried next night" % branch)
+        return None
+    if record.get("number") is not None:
+        return record["url"]
+    try:
+        url = create_mr(record["forge"], repo, branch, base, title, MR_BODY, reviewers)
+        found = re.search(r"/(\d+)/?$", url)
+        if not found:
+            raise ConfigError("cannot read a merge request number from %s" % url)
+    except ConfigError as exc:
+        notes.append("merge request for %s not created: %s" % (branch, exc))
+        return None
+    record["number"], record["url"] = int(found.group(1)), url
+    return url
+
+
+def propose(repo, rule, ops, summary, today, state, cfg, notes=None):
+    notes = [] if notes is None else notes
     repo = Path(repo)
-    origin = _out(repo, ["config", "--get", "remote.origin.url"])
-    forge = forge_of(origin)
+    key = str(repo.resolve())
+    forge = forge_of(_origin_url(repo))
     if forge is None or rule.get("promote") is not True:
+        notes.append("no promotable forge for %s" % key)
         return None
     fields = {"ticket": rule.get("ticket", ""), "summary": summary, "date": today.isoformat()}
-    branch = _fill(rule["branch"], **fields)
     message = _fill(rule["commit"], **fields)
-    if _git(repo, ["check-ref-format", "--branch", branch], check=False).returncode != 0:
-        raise ValueError("invalid branch name: %s" % branch)
     _git(repo, ["fetch", "-q", "origin"])
     base = _default_branch(repo)
-    if branch == base:
-        raise ValueError("refusing to use the default branch %s" % base)
+    local, remote = _branches(repo, "refs/heads/"), _branches(repo, "refs/remotes/origin/")
 
-    key = str(repo)
-    mr = state["open_mrs"].get(key)
-    if mr:
+    record = state["open_mrs"].get(key)
+    if record and record.get("number") is not None:
         try:
-            still_open = mr_is_open(forge, mr["url"])
-        except ConfigError:
+            still_open = mr_is_open(record["forge"], record["number"], repo)
+        except ConfigError as exc:
+            notes.append("merge request status unknown: %s" % exc)
             return None
         if not still_open:
+            record = None
             del state["open_mrs"][key]
-            mr = None
-    if mr:
-        branch = mr["branch"]
-        if branch == base:
-            raise ValueError("refusing to use the default branch %s" % base)
-        start = ["worktree", "add", "-q", "-B", branch, "WT", "origin/" + branch]
-        created = False
-    elif _has_ref(repo, "refs/heads/" + branch):
-        start, created = ["worktree", "add", "-q", "WT", branch], False
+    if record and record["branch"] not in local and record["branch"] not in remote:
+        record = None
+        del state["open_mrs"][key]
+
+    if record:
+        branch = record["branch"]
+        _guard(repo, branch, base)
+        reuse = True
     else:
-        start, created = ["worktree", "add", "-q", "-b", branch, "WT", "origin/" + base], True
+        branch = _fill(rule["branch"], **fields)
+        if _git(repo, ["check-ref-format", "--branch", branch], check=False).returncode != 0:
+            raise ValueError("invalid branch name: %s" % branch)
+        _guard(repo, branch, base)
+        taken = [name.casefold() for name in local + remote]
+        if branch.casefold() in taken:
+            notes.append("branch %s already exists and is not one this run recorded; skipped" % branch)
+            return None
+        reuse = False
 
     tree = Path(tempfile.mkdtemp(prefix="dream-worktree-"))
     committed = False
     try:
-        _git(repo, [str(tree) if a == "WT" else a for a in start])
+        if branch in local:
+            start = ["worktree", "add", "-q", str(tree), branch]
+        elif branch in remote:
+            start = ["worktree", "add", "-q", "-b", branch, str(tree), "origin/" + branch]
+        else:
+            start = ["worktree", "add", "-q", "-b", branch, str(tree), "origin/" + base]
+        _git(repo, _NO_HOOKS + start)
+        if reuse and branch in remote:
+            _git(tree, ["merge", "-q", "--ff-only", "origin/" + branch], check=False)
         apply_ops(ops, cfg["memory_dir"], tree, today, cfg["caps"])
-        if not _out(tree, ["status", "--porcelain"]):
-            return mr["url"] if mr else None
-        _git(tree, ["add", "-A"])
-        _git(tree, _commit_args(message))
-        committed = True
-        refspec = "refs/heads/%s:refs/heads/%s" % (branch, branch)
-        if _git(tree, ["push", "-q", "origin", refspec], check=False).returncode != 0:
-            _remember_push_failure(state, repo, branch)
-            return None
-        if mr:
-            return mr["url"]
-        url = create_mr(forge, repo, branch, base, message, MR_BODY, rule.get("reviewers"))
-        state["open_mrs"][key] = {"url": url, "branch": branch}
-        return url
+        if _out(tree, ["status", "--porcelain"]):
+            _git(tree, ["add", "-A"])
+            _git(tree, _commit_args(message))
+            committed = True
+        if not reuse:
+            if not committed:
+                return None
+            record = {"branch": branch, "forge": forge, "number": None, "url": None, "title": message}
+            state["open_mrs"][key] = record
     finally:
         _git(repo, ["worktree", "remove", "--force", str(tree)], check=False)
         shutil.rmtree(str(tree), ignore_errors=True)
         _git(repo, ["worktree", "prune"], check=False)
-        if created and not committed:
+        if not reuse and not committed and branch not in local:
             _git(repo, ["branch", "-D", branch], check=False)
+    return _publish(repo, record, base, record.get("title") or message, rule.get("reviewers"), notes)
 
 
-def retry_pushes(state):
-    left = []
-    for entry in state["pending_pushes"]:
-        refspec = "refs/heads/%s:refs/heads/%s" % (entry["branch"], entry["branch"])
-        if _git(entry["repo"], ["push", "-q", "origin", refspec], check=False).returncode != 0:
-            left.append(entry)
-    state["pending_pushes"] = left
+def retry_pushes(state, cfg, notes=None):
+    """Publish every recorded branch that still lacks a merge request, under the same guards as propose."""
+    notes = [] if notes is None else notes
+    for key, record in list(state["open_mrs"].items()):
+        if record.get("number") is not None:
+            continue
+        rule = rule_for(_origin_url(key), cfg)
+        if rule is None:
+            notes.append("no promote rule for %s" % key)
+            continue
+        base = _default_branch(key)
+        _guard(key, record["branch"], base)
+        _publish(Path(key), record, base, record.get("title") or record["branch"], rule.get("reviewers"), notes)
