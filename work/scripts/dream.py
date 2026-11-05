@@ -125,7 +125,9 @@ STRIPPED_BLOCKS = ("pasted_content", "system-reminder", "task-notification", "ag
 NON_TYPED_PREFIXES = ("<command-name>", "<command-message>", "<local-command-", "<bash-input>",
                       "<bash-stdout>", "<bash-stderr>", "<user-prompt-submit-hook>")
 NON_TYPED_ANYWHERE = ("<artifact-content-authored-by-others",)
-BLOCK_RES = [re.compile(r"<%s\b[^>]*>.*?</%s>" % (tag, tag), re.DOTALL) for tag in STRIPPED_BLOCKS]
+BLOCK_RES = [re.compile(r"<\s*%s\b[^>]*>.*?(?:<\s*/\s*%s\s*>|\Z)" % (tag, tag), re.DOTALL | re.IGNORECASE)
+             for tag in STRIPPED_BLOCKS]
+LEFTOVER_TAG_RE = re.compile(r"<\s*/?\s*(?:%s)\b" % "|".join(STRIPPED_BLOCKS), re.IGNORECASE)
 
 
 def _text_blocks(content):
@@ -156,7 +158,9 @@ def user_text(entry, agent_patterns):
     for pattern in BLOCK_RES:
         raw = pattern.sub("", raw)
     text = raw.strip()
-    if not text or text.startswith(NON_TYPED_PREFIXES) or any(t in text for t in NON_TYPED_ANYWHERE):
+    lowered = text.lower()
+    if (not text or lowered.startswith(NON_TYPED_PREFIXES) or any(t in lowered for t in NON_TYPED_ANYWHERE)
+            or LEFTOVER_TAG_RE.search(text)):
         return None
     return text, any(re.search(p, text) for p in agent_patterns)
 
