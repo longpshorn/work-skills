@@ -11,7 +11,7 @@ import work
 
 def test_state_round_trip_and_defaults(dream_env):
     assert dream.load_state() == {"version": 1, "transcripts": {}, "last_run": None, "last_success": None,
-                                  "reorganized": False, "open_mrs": {}, "pending_pushes": []}
+                                  "reorganized": False, "open_mrs": {}}
     state = dream.load_state()
     state["transcripts"]["a"] = {"mtime": 1.5, "uuid": "u1"}
     dream.save_state(state)
