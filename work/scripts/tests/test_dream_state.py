@@ -147,3 +147,21 @@ def test_cli_dream_status_prints_only_when_unhealthy_and_exits_zero(dream_env, m
     dream.append_log(dream.log_line(dt.date.today(), 0, {}, [], False, "boom"))
     assert work.main(["dream-status"]) == 0
     assert capsys.readouterr().out == "dream: last run failed (boom)\n"
+
+
+def test_an_unreadable_state_file_is_an_error_not_corruption(dream_env):
+    (dream_env.state / "state.json").mkdir(parents=True)
+    with pytest.raises(OSError):
+        dream.load_state()
+    assert (dream_env.state / "state.json").is_dir()
+    assert not (dream_env.state / "state.json.bad").exists()
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1]"])
+def test_status_never_moves_or_writes_a_corrupt_state(dream_env, text):
+    dream.append_log(_ok(TODAY))
+    (dream_env.state / "state.json").write_text(text, encoding="utf-8")
+    before = sorted(p.name for p in dream_env.state.iterdir())
+    assert dream.dream_status(TODAY) is None
+    assert sorted(p.name for p in dream_env.state.iterdir()) == before
+    assert (dream_env.state / "state.json").read_text(encoding="utf-8") == text

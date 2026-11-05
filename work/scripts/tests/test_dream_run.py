@@ -728,3 +728,33 @@ def test_a_config_of_the_wrong_shape_logs_one_failed_line(world, shape):
     lines = log_lines(world)
     assert len(lines) == 1 and "| failed: " in lines[0] and "must be an object" in lines[0]
     assert calls(world) == []
+
+
+def test_an_unreadable_state_file_fails_the_run_and_is_left_alone(world):
+    (world.env.state / "state.json").unlink()
+    (world.env.state / "state.json").mkdir()
+    talk(world, 3)
+    assert run() == 1
+    lines = log_lines(world)
+    assert len(lines) == 1 and "| failed: " in lines[0]
+    assert (world.env.state / "state.json").is_dir() and calls(world) == []
+
+
+def test_a_reset_state_keeps_a_reorganization_already_in_the_memory_history(world):
+    git(world.mem, "commit", "-q", "--allow-empty", "-m", "dream: first-run reorganization")
+    (world.env.state / "state.json").write_text("{not json", encoding="utf-8")
+    talk(world, 3)
+    world.plan({"extract": {}})
+    assert run() == 0
+    assert calls(world) == ["extract"]
+    assert dream.load_state()["reorganized"] is True
+
+
+def test_an_unexpected_error_before_the_snapshot_logs_one_failed_line(world, monkeypatch):
+    def boom(state, cfg, notes=None):
+        raise RuntimeError("retry exploded")
+    monkeypatch.setattr(dream, "retry_pushes", boom)
+    talk(world, 3)
+    assert run() == 1
+    lines = log_lines(world)
+    assert len(lines) == 1 and "failed: retry exploded" in lines[0] and calls(world) == []

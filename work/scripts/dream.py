@@ -408,21 +408,30 @@ def default_state():
             "reorganized": False, "open_mrs": {}}
 
 
+def _read_state(path):
+    """The saved state, or None when there is none; ValueError when it is corrupt, OSError when unreadable."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("state is not an object")
+    return data
+
+
 def load_state():
+    """The run's state; a corrupt file is set aside as state.json.bad and the defaults are used."""
     path = state_dir() / "state.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("state is not an object")
-    except FileNotFoundError:
-        return default_state()
-    except (OSError, ValueError):
+        data = _read_state(path)
+    except ValueError:
         try:
             os.replace(str(path), str(path) + ".bad")
         except OSError:
             pass
         return default_state()
-    return _merge(default_state(), data)
+    return default_state() if data is None else _merge(default_state(), data)
 
 
 def save_state(state):
@@ -513,7 +522,10 @@ def dream_status(today):
     failed = re.search(r"\| failed: (.*)$", last)
     if failed:
         return "dream: last run failed (%s)" % failed.group(1)
-    success = load_state().get("last_success")
+    try:
+        success = (_read_state(state_dir() / "state.json") or {}).get("last_success")
+    except (OSError, ValueError):
+        success = None
     try:
         days = (today - dt.date.fromisoformat(success)).days
     except (TypeError, ValueError):
@@ -1650,6 +1662,12 @@ def _apply_direct_ops(cfg, mode, run_dir, today):
     os.replace(str(path), str(Path(run_dir) / ("ops-applied-%s.json" % mode)))
 
 
+def _reorganized_before(memory_dir):
+    """Whether the memory folder's history already holds the first-run reorganization commit."""
+    subjects = _out(memory_dir, ["log", "--format=%s", "--fixed-strings", "--grep", REORGANIZE_SUBJECT])
+    return REORGANIZE_SUBJECT in subjects.splitlines()
+
+
 def _require_check(cfg):
     problems = check_memory(cfg["memory_dir"], cfg["caps"])
     if problems:
@@ -1869,18 +1887,24 @@ def _propose_all(promotions, cfg, today, state, notes):
 def _run_locked(cfg, now, force, skill, say):
     today, memory_dir, caps = now.date(), cfg["memory_dir"], cfg["caps"]
     notes, backups = [], {}
-    state = load_state()
-    state["last_run"] = now.isoformat(timespec="seconds")
-    say("retrying unpublished promotions")
-    retry_pushes(state, cfg, notes)
-    save_state(state)
-    env = claude_env(dict(os.environ))
+    try:
+        state = load_state()
+        state["last_run"] = now.isoformat(timespec="seconds")
+        say("retrying unpublished promotions")
+        retry_pushes(state, cfg, notes)
+        save_state(state)
+        env = claude_env(dict(os.environ))
+    except Exception as exc:
+        _log(today, 0, {}, [], False, str(exc) or type(exc).__name__, notes)
+        return 1
     read, reset_point = 0, None
     try:
         _require_claude(cfg, env)
         reset_point = snapshot(memory_dir, today)
         copy_global(memory_dir, cfg["global_claude_md"])
         reset_point = _head(memory_dir)
+        if not state["reorganized"] and _reorganized_before(memory_dir):
+            state["reorganized"] = True
         run_dir = _run_dir(now)
         say("gathering conversations")
         since = now - dt.timedelta(days=caps["first_run_days"])
