@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -13,6 +14,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from xml.sax.saxutils import escape
 from typing import Dict, List, Optional, Tuple
 
 DEFAULTS = {
@@ -119,6 +121,9 @@ def add_parsers(sub):
     parsers["dream-run"].add_argument("--now", action="store_true",
                                       help="run even with fewer ended conversations than min_conversations")
     parsers["dream-run"].add_argument("--skill", help="skill file the stages follow (default: the dream skill)")
+    parsers["dream-install"].add_argument("--init-memory", action="store_true",
+                                          help="make the memory folder its own git repo and create the global CLAUDE.md if missing")
+    parsers["dream-install"].add_argument("--load", action="store_true", help="load the LaunchAgent with launchctl")
     return parsers
 
 
@@ -131,6 +136,8 @@ def run_command(args):
         return _check_command(args)
     if args.cmd == "dream-run":
         return dream_run(dt.datetime.now(), args.now, args.skill)
+    if args.cmd == "dream-install":
+        return dream_install(args.init_memory, args.load)
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
 
@@ -1831,3 +1838,169 @@ def dream_run(now, force, skill, progress=None):
             return _run_locked(cfg, now, force, Path(skill) if skill else SKILL_PATH, say)
     except Busy:
         return 0
+
+
+INSTALL_LABEL = "com.work.dream"
+SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+LAUNCHER = """#!/bin/sh
+# Runs work-tools from the newest installed copy of the work plugin, resolved at run time so plugin updates need no reinstall.
+tools=
+for candidate in "$HOME"/.claude/plugins/cache/*/work/*/scripts/work-tools; do
+  [ -f "$candidate" ] || continue
+  if [ -z "$tools" ] || [ "$candidate" -nt "$tools" ]; then tools=$candidate; fi
+done
+[ -n "$tools" ] || tools=%s
+exec sh "$tools" "$@"
+"""
+
+
+def _tilde(value, home):
+    value = str(value)
+    return home / value[2:] if value.startswith("~/") else (home if value == "~" else Path(value))
+
+
+def _install_config_path(home):
+    override = os.environ.get("WORK_DREAM_CONFIG")
+    return Path(os.path.expanduser(override)) if override else home / ".config" / "work" / "dream.json"
+
+
+def _install_state_dir(home):
+    override = os.environ.get("WORK_DREAM_STATE")
+    return Path(os.path.expanduser(override)) if override else home / ".local" / "state" / "work-dream"
+
+
+def _install_settings(home):
+    try:
+        return json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _install_git(path, args, home):
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_ENV}
+    env["HOME"] = str(home)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        return subprocess.run(["git", "-C", str(path)] + list(args), capture_output=True, text=True, env=env,
+                              timeout=GIT_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigError("git %s failed: %s" % (args[0], exc))
+
+
+def _git_value(path, args, home):
+    done = _install_git(path, args, home)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _init_memory(memory_dir, global_md, home):
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    top = _git_value(memory_dir, ["rev-parse", "--show-toplevel"], home)
+    if not top or not os.path.samefile(top, str(memory_dir)):
+        _git_must(memory_dir, ["init", "-q", "-b", "main"], home)
+    for key in ("user.name", "user.email"):
+        if _git_value(memory_dir, ["config", "--local", key], home):
+            continue
+        value = _git_value(memory_dir, ["config", "--global", key], home)
+        if not value:
+            raise ConfigError("no git %s: set it with git config --global, then run dream-install --init-memory again" % key)
+        _git_must(memory_dir, ["config", "--local", key, value], home)
+    if _install_git(memory_dir, ["rev-parse", "--verify", "-q", "HEAD"], home).returncode != 0:
+        _git_must(memory_dir, ["add", "-A"], home)
+        _git_must(memory_dir, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "--allow-empty",
+                               "-m", "init: memory folder"], home)
+        print("committed the memory folder: %s" % memory_dir)
+    if not global_md.exists():
+        global_md.parent.mkdir(parents=True, exist_ok=True)
+        global_md.write_text("# Global instructions\n", encoding="utf-8")
+        print("created %s" % global_md)
+
+
+def _git_must(path, args, home):
+    done = _install_git(path, args, home)
+    if done.returncode != 0:
+        raise ConfigError("git %s failed: %s" % (args[0], (done.stderr or done.stdout).strip()))
+
+
+def _plist_environment(home, claude_dir):
+    parts = []
+    for entry in [claude_dir, "/opt/homebrew/bin", "/usr/local/bin", str(home / ".local" / "bin")] + list(SYSTEM_PATH):
+        if entry and entry not in parts:
+            parts.append(entry)
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser()
+    values = [("HOME", str(home)), ("PATH", os.pathsep.join(parts)), ("USER", user), ("LOGNAME", os.environ.get("LOGNAME") or user)]
+    values += [(name, os.environ[name]) for name in ("WORK_DREAM_CONFIG", "WORK_DREAM_STATE", "WORK_DREAM_PROJECTS")
+               if os.environ.get(name)]
+    return "\n".join("    <key>%s</key>\n    <string>%s</string>" % (escape(k), escape(v)) for k, v in values)
+
+
+def _write_if_changed(path, text, mode=None):
+    data = text.encode("utf-8")
+    if path.is_file() and path.read_bytes() == data:
+        print("unchanged %s" % path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    if mode:
+        path.chmod(mode)
+    print("wrote %s" % path)
+
+
+def dream_install(init_memory, load, launchctl="launchctl", home=None):
+    home = Path(home) if home else Path(os.path.expanduser("~"))
+    config = _install_config_path(home)
+    cfg = copy.deepcopy(DEFAULTS)
+    try:
+        if config.is_file():
+            _merge(cfg, _read_json(config, "config"))
+        memory = cfg.get("memory_dir") or _install_settings(home).get("autoMemoryDirectory")
+        if not isinstance(memory, str) or not memory:
+            raise ConfigError(
+                'no memory folder: set "autoMemoryDirectory" in %s (for example "~/.claude/memory"), '
+                "or memory_dir in %s, then run dream-install again" % (home / ".claude" / "settings.json", config))
+        memory_dir = _tilde(memory, home)
+        global_md = _tilde(cfg.get("global_claude_md") or "~/.claude/CLAUDE.md", home)
+        schedule = cfg["schedule"]
+        hour, minute = int(schedule["hour"]), int(schedule["minute"])
+    except (ConfigError, KeyError, TypeError, ValueError) as exc:
+        print("dream-install: %s" % exc)
+        return 1
+    if not config.is_file():
+        config.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(Path(__file__).resolve().parents[1] / "templates" / "dream.example.jsonc"), str(config))
+        print("wrote %s" % config)
+    else:
+        print("kept %s" % config)
+    state = _install_state_dir(home)
+    tools = Path(__file__).resolve().with_name("work-tools")
+    launcher = state / "launcher.sh"
+    _write_if_changed(launcher, LAUNCHER % shlex.quote(str(tools)), 0o755)
+    claude = shutil.which(cfg.get("claude_bin") or "claude", path=os.pathsep.join(
+        [os.environ.get("PATH", "")] + [str(home / ".local" / "bin"), "/opt/homebrew/bin", "/usr/local/bin"]))
+    template = (Path(__file__).resolve().parents[1] / "templates" / "com.work.dream.plist").read_text(encoding="utf-8")
+    plist = home / "Library" / "LaunchAgents" / (INSTALL_LABEL + ".plist")
+    text = template.format(label=INSTALL_LABEL, launcher=escape(str(launcher)), log_dir=escape(str(state)),
+                           hour=hour, minute=minute,
+                           environment=_plist_environment(home, os.path.dirname(claude) if claude else ""))
+    _write_if_changed(plist, text)
+    if not claude:
+        print("note: %s was not found on PATH; the nightly run fails until it is installed" % (cfg.get("claude_bin") or "claude"))
+    try:
+        if init_memory:
+            _init_memory(memory_dir, global_md, home)
+    except ConfigError as exc:
+        print("dream-install: %s" % exc)
+        return 1
+    if load:
+        return _load(launchctl, plist)
+    return 0
+
+
+def _load(launchctl, plist):
+    target = "gui/%d" % os.getuid()
+    subprocess.run([launchctl, "bootout", "%s/%s" % (target, INSTALL_LABEL)], capture_output=True, text=True)
+    done = subprocess.run([launchctl, "bootstrap", target, str(plist)], capture_output=True, text=True)
+    if done.returncode != 0:
+        print("dream-install: launchctl bootstrap failed: %s" % (done.stderr or done.stdout).strip())
+        return 1
+    print("loaded %s" % INSTALL_LABEL)
+    return 0

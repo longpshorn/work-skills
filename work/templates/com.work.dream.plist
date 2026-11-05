@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>sh</string>
+    <string>{launcher}</string>
+    <string>dream-run</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>{hour}</integer>
+    <key>Minute</key>
+    <integer>{minute}</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+{environment}
+  </dict>
+  <key>StandardOutPath</key>
+  <string>{log_dir}/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{log_dir}/launchd.err.log</string>
+</dict>
+</plist>
