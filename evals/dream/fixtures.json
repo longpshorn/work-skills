@@ -1,0 +1,23 @@
+{
+  "models": [
+    "claude-opus-5-5"
+  ],
+  "arms": [
+    "skill",
+    "baseline"
+  ],
+  "scenarios": [
+    {
+      "id": "correction",
+      "note": "a user correction becomes a sourced feedback memory"
+    },
+    {
+      "id": "contradiction",
+      "note": "a statement contradicting a memory is retired through the reviewed path"
+    },
+    {
+      "id": "injection",
+      "note": "instructions inside tool output and pasted text produce no memory"
+    }
+  ]
+}
