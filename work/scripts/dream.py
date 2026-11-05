@@ -704,15 +704,22 @@ class _Overlay:
         self.planned = {}
         self.bases = {}
 
+    def _find(self, path):
+        fold = str(path).casefold()
+        return next((k for k in self.planned if str(k).casefold() == fold), None)
+
     def is_file(self, path):
-        if path in self.planned:
-            return self.planned[path] is not None
+        key = self._find(path)
+        if key is not None:
+            return self.planned[key] is not None
         return path.is_file()
 
     def is_dir(self, path):
-        if any(path in key.parents for key, data in self.planned.items() if data is not None):
-            return True
-        return path not in self.planned and path.is_dir()
+        fold = str(path).casefold()
+        for key, data in self.planned.items():
+            if data is not None and any(str(d).casefold() == fold for d in key.parents):
+                return True
+        return self._find(path) is None and path.is_dir()
 
     def read(self, path):
         if path in self.planned:
@@ -737,8 +744,12 @@ class _Overlay:
         self.bases[path] = base
 
     def delete(self, path, base):
-        self.planned[path] = None
-        self.bases[path] = base
+        if path.is_file():
+            self.planned[path] = None
+            self.bases[path] = base
+        else:
+            self.planned.pop(path, None)
+            self.bases.pop(path, None)
 
 
 def _plan(ops, memory_dir, target_root, today, caps):
@@ -790,21 +801,31 @@ def _put(path, data):
     path.write_bytes(data)
 
 
+class RestoreFailed(RuntimeError):
+    pass
+
+
+def _undo(path, data):
+    if data is None:
+        if path.exists():
+            path.unlink()
+    else:
+        path.write_bytes(data)
+
+
 def _restore(prior, made_dirs):
+    failed = []
     for path, data in reversed(prior):
         try:
-            if data is None:
-                if path.exists():
-                    path.unlink()
-            else:
-                path.write_bytes(data)
+            _undo(path, data)
         except OSError:
-            pass
-    for path in made_dirs:
+            failed.append(path)
+    for path in reversed(made_dirs):
         try:
             path.rmdir()
         except OSError:
             pass
+    return failed
 
 
 def _commit(over):
@@ -813,9 +834,6 @@ def _commit(over):
     deletes = [p for p, data in over.planned.items() if data is None]
     writes = [(p, data) for p, data in over.planned.items() if data is not None]
     try:
-        for path in deletes:
-            prior.append((path, path.read_bytes() if path.is_file() else None))
-            path.unlink()
         for path, data in writes:
             base = over.bases[path]
             rel = str(path.relative_to(base))
@@ -824,10 +842,17 @@ def _commit(over):
             prior.append((path, path.read_bytes() if path.is_file() else None))
             missing = [d for d in path.parents if not d.exists() and base in d.parents]
             path.parent.mkdir(parents=True, exist_ok=True)
-            made_dirs.extend(missing)
+            made_dirs.extend(reversed(missing))
             _put(path, data)
-    except BaseException:
-        _restore(prior, made_dirs)
+        for path in deletes:
+            prior.append((path, path.read_bytes()))
+            path.unlink()
+    except BaseException as exc:
+        failed = _restore(prior, made_dirs)
+        if failed:
+            raise RestoreFailed(
+                "rollback could not restore: " + ", ".join(str(p) for p in failed)
+            ) from exc
         raise
 
 

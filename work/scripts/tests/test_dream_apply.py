@@ -370,3 +370,56 @@ def test_unprintable_path_segments_are_refused(tmp_path):
     mem = memory_dir(tmp_path)
     for path in ("a\x0bb.md", "a\u202eb.md", "d\x85/x.md"):
         untouched([w("memory", path)], mem, None, dream.UnsafePath)
+
+
+def test_rollback_removes_nested_created_directories(tmp_path, monkeypatch):
+    mem = memory_dir(tmp_path)
+    real = dream._put
+    calls = []
+
+    def flaky(path, data):
+        calls.append(path)
+        if len(calls) == 3:
+            raise OSError("disk full")
+        real(path, data)
+
+    monkeypatch.setattr(dream, "_put", flaky)
+    ops = [w("memory", "a/b/x.md"), w("memory", "a/b/c/y.md"), w("memory", "z.md")]
+    with pytest.raises(OSError):
+        dream.apply_ops(ops, mem, None, TODAY, CAPS)
+    assert snapshot(mem) == {}
+
+
+def test_failed_restore_never_loses_a_retired_note_and_names_the_path(tmp_path, monkeypatch):
+    mem = memory_dir(tmp_path)
+    (mem / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+    real_put, real_undo = dream._put, dream._undo
+
+    def flaky_put(path, data):
+        if path.name == "a.md":
+            raise OSError("disk full")
+        real_put(path, data)
+
+    def flaky_undo(path, data):
+        if path.name == "good.md":
+            raise OSError("cannot restore")
+        real_undo(path, data)
+
+    monkeypatch.setattr(dream, "_put", flaky_put)
+    monkeypatch.setattr(dream, "_undo", flaky_undo)
+    with pytest.raises(dream.RestoreFailed) as info:
+        dream.apply_ops([w("memory", "good.md"), retire("a.md")], mem, None, TODAY, CAPS)
+    assert "good.md" in str(info.value)
+    assert isinstance(info.value.__cause__, OSError)
+    assert (mem / "a.md").exists()
+
+
+def test_retiring_a_note_written_in_the_same_batch_leaves_only_the_retired_copy(tmp_path):
+    mem = memory_dir(tmp_path)
+    dream.apply_ops([w("memory", "n.md", NOTE.format(n="n")), retire("n.md")], mem, None, TODAY, CAPS)
+    assert not (mem / "n.md").exists()
+    assert dream.parse_memory((mem / "_retired" / "n.md").read_text())["superseded_by"] == "n"
+
+
+def test_file_directory_conflicts_compare_case_insensitively(tmp_path):
+    untouched([w("memory", "D"), w("memory", "d/x.md")], memory_dir(tmp_path))
