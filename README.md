@@ -48,7 +48,7 @@ The path must be absolute or start with `~`; the helper refuses a relative one. 
 
 Know what you are installing:
 
-- **It edits memory unattended.** Nobody reviews a run before it lands. The memory folder is its own local git repo, committed before and after each run that changes anything, and a failed run is reset, so any run can be reverted.
+- **It edits memory unattended.** Nobody reviews a run before it lands. The memory folder is its own local git repo, committed before and after each run that changes anything, and a run that fails before its memory commit is reset, so any run can be reverted.
 - **It opens merge requests (pull requests on GitHub) but never merges.** A fact about one repo can be proposed as a change to that repo's `CLAUDE.md` or `AGENTS.md`, but only for a repo you have allowed with `"promote": true`. The run pushes a branch and opens one merge request per repo for you to review; it never merges and never pushes to the default branch. A proposal is deferred when your checkout of the file differs from the branch it would land on. Facts about you go only to your global `CLAUDE.md`, which the run edits directly.
 - **Paid models run nightly on your plan.** Each run starts a Sonnet extraction stage and an Opus check per reviewed change, each with turn, time and dollar caps. A night with fewer than `min_conversations` ended conversations makes no model calls. The runs leave no session transcript, so they never appear in tomorrow's digest.
 
@@ -66,7 +66,9 @@ sh "<plugin>/scripts/work-tools" dream-install --init-memory --load
 
 ### Turn it off
 
-`launchctl bootout gui/$(id -u)/com.work.dream` stops the schedule. To uninstall, also delete `~/Library/LaunchAgents/com.work.dream.plist`. Removing `~/.local/state/work-dream` and `~/.config/work/dream.json` is optional. The memory folder's git history stays.
+To pause across logins (launchd reloads every plist in `~/Library/LaunchAgents` at login), run `launchctl disable gui/$(id -u)/com.work.dream`, then `launchctl bootout gui/$(id -u)/com.work.dream` to stop the loaded job. To resume, run `launchctl enable gui/$(id -u)/com.work.dream`, then `dream-install --load`.
+
+To uninstall, run `launchctl bootout gui/$(id -u)/com.work.dream`, then delete `~/Library/LaunchAgents/com.work.dream.plist`. Removing `~/.local/state/work-dream` and `~/.config/work/dream.json` is optional. The memory folder's git history stays.
 
 ### Config
 

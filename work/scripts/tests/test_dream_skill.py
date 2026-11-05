@@ -173,5 +173,7 @@ def test_store_readme_lists_dream_among_skills():
 
 def test_readme_says_how_to_turn_it_off():
     text = flat((REPO / "README.md").read_text(encoding="utf-8"))
-    assert "launchctl bootout" in text and "com.work.dream.plist" in text
+    assert "launchctl bootout gui/$(id -u)/com.work.dream" in text
+    assert "launchctl disable gui/$(id -u)/com.work.dream" in text
+    assert "delete `~/library/launchagents/com.work.dream.plist`" in text
     assert "dream-install --load" in text
