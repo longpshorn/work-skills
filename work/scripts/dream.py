@@ -3,8 +3,11 @@
 import copy
 import json
 import os
+import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 DEFAULTS = {
     "models": {"extract": "sonnet", "check": "opus"},
@@ -105,3 +108,127 @@ def add_parsers(sub):
 def run_command(args):
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
+
+
+@dataclass
+class Turn:
+    uuid: str
+    session: str
+    cwd: str
+    timestamp: str
+    role: str
+    text: str
+    flags: List[str] = field(default_factory=list)
+
+
+STRIPPED_BLOCKS = ("pasted_content", "system-reminder", "task-notification", "agent-message")
+NON_TYPED_PREFIXES = ("<command-name>", "<command-message>", "<local-command-", "<bash-input>",
+                      "<bash-stdout>", "<bash-stderr>", "<user-prompt-submit-hook>")
+NON_TYPED_ANYWHERE = ("<artifact-content-authored-by-others",)
+BLOCK_RES = [re.compile(r"<%s\b[^>]*>.*?</%s>" % (tag, tag), re.DOTALL) for tag in STRIPPED_BLOCKS]
+
+
+def _text_blocks(content):
+    """The text of a message's content, or None when it holds anything but typed text."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") == "tool_result":
+            return None
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return " ".join(parts)
+
+
+def user_text(entry, agent_patterns):
+    """The user's own typed text and whether it opens an agent session, or None for anything else."""
+    if entry.get("type") != "user" or entry.get("isSidechain"):
+        return None
+    if entry.get("isMeta") or entry.get("isCompactSummary") or "toolUseResult" in entry:
+        return None
+    message = entry.get("message")
+    raw = _text_blocks(message.get("content")) if isinstance(message, dict) else None
+    if raw is None:
+        return None
+    for pattern in BLOCK_RES:
+        raw = pattern.sub("", raw)
+    text = raw.strip()
+    if not text or text.startswith(NON_TYPED_PREFIXES) or any(t in text for t in NON_TYPED_ANYWHERE):
+        return None
+    return text, any(re.search(p, text) for p in agent_patterns)
+
+
+def final_reply(entries):
+    """(uuid, text) of the turn's last assistant message, when it holds text and no tool call."""
+    groups = []
+    for entry in entries:
+        message = entry.get("message")
+        if entry.get("type") != "assistant" or entry.get("isSidechain") or not isinstance(message, dict):
+            continue
+        blocks = message.get("content")
+        blocks = [b for b in blocks if isinstance(b, dict)] if isinstance(blocks, list) else []
+        msg_id = message.get("id")
+        if groups and groups[-1][0] == msg_id:
+            groups[-1][1].append((entry, blocks))
+        else:
+            groups.append((msg_id, [(entry, blocks)]))
+    groups = [g for g in groups if any(b.get("type") in ("text", "tool_use") for _, bs in g[1] for b in bs)]
+    if not groups:
+        return None
+    lines = groups[-1][1]
+    if any(b.get("type") == "tool_use" for _, bs in lines for b in bs):
+        return None
+    texts = [(e, b["text"]) for e, bs in lines for b in bs
+             if b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip()]
+    if not texts:
+        return None
+    return texts[-1][0].get("uuid"), "\n".join(t for _, t in texts).strip()
+
+
+def _json_lines(path):
+    """Parsed lines of a transcript; bad lines are skipped, a truncated last line ends reading."""
+    pieces = path.read_text(encoding="utf-8", errors="replace").split("\n")
+    for index, piece in enumerate(pieces):
+        if not piece.strip():
+            continue
+        try:
+            entry = json.loads(piece)
+        except ValueError:
+            if index == len(pieces) - 1:
+                return
+            continue
+        if isinstance(entry, dict):
+            yield entry
+
+
+def read_turns(path, after_uuid, agent_patterns):
+    """Turns after after_uuid (all when None or unknown) and the last turn's uuid."""
+    turns = []
+    pending = []
+
+    def flush():
+        reply = final_reply(pending)
+        if reply:
+            turns.append(Turn(reply[0], pending[-1].get("sessionId", ""), pending[-1].get("cwd") or "",
+                              pending[-1].get("timestamp", ""), "claude", reply[1]))
+        pending.clear()
+
+    for entry in _json_lines(path):
+        typed = user_text(entry, agent_patterns)
+        if typed:
+            flush()
+            turns.append(Turn(entry.get("uuid", ""), entry.get("sessionId", ""), entry.get("cwd") or "",
+                              entry.get("timestamp", ""), "user", typed[0],
+                              ["agent_session"] if typed[1] else []))
+        elif entry.get("type") == "assistant":
+            pending.append(entry)
+    flush()
+    last = turns[-1].uuid if turns else None
+    if after_uuid:
+        seen = [i for i, t in enumerate(turns) if t.uuid == after_uuid]
+        if seen:
+            turns = turns[seen[0] + 1:]
+    return turns, last
