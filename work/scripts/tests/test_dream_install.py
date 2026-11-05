@@ -89,25 +89,47 @@ def test_plist_uses_the_configured_schedule(env):
     assert plistlib.loads(env.plist.read_bytes())["StartCalendarInterval"] == {"Hour": 4, "Minute": 30}
 
 
-def test_launcher_runs_the_newest_installed_plugin_copy(env):
-    install(env)
-    cache = env.home / ".claude" / "plugins" / "cache" / "market" / "work"
-    for version, mtime in (("1.0.0", 1000), ("1.1.0", 2000)):
-        scripts = cache / version / "scripts"
-        scripts.mkdir(parents=True)
-        tool = scripts / "work-tools"
-        tool.write_text('echo "ran %s $@"\n' % version, encoding="utf-8")
-        os.utime(tool, (mtime, mtime))
-    done = subprocess.run(["sh", str(env.state / "launcher.sh"), "dream-run"], capture_output=True, text=True,
-                          env=dict(os.environ, HOME=str(env.home)))
-    assert done.stdout.strip() == "ran 1.1.0 dream-run"
+def _plugin_copy(env, name, mtime):
+    scripts = env.home / ".claude" / "plugins" / "cache" / "market" / "work" / name / "scripts"
+    scripts.mkdir(parents=True)
+    tool = scripts / "work-tools"
+    tool.write_text('echo "ran %s $@"\n' % name, encoding="utf-8")
+    os.utime(tool, (mtime, mtime))
+    return scripts.parent
 
 
-def test_launcher_falls_back_to_the_installed_copy_it_was_written_for(env):
-    install(env)
-    done = subprocess.run(["sh", str(env.state / "launcher.sh"), "dream-run", "--help"], capture_output=True, text=True,
+def _run_launcher(env, *args):
+    done = subprocess.run(["sh", str(env.state / "launcher.sh")] + list(args), capture_output=True, text=True,
                           env=dict(os.environ, HOME=str(env.home)))
-    assert "dream-run" in done.stdout
+    return done.stdout.strip()
+
+
+def _installed_plugins(env, text):
+    path = env.home / ".claude" / "plugins" / "installed_plugins.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_launcher_runs_the_copy_claude_code_has_installed_not_the_newest_file(env):
+    install(env)
+    old = _plugin_copy(env, "old", 1000)
+    _plugin_copy(env, "new", 2000)
+    entries = {"work@market": [{"scope": "project", "installPath": "/nowhere"},
+                               {"scope": "user", "installPath": str(old), "version": "1"}],
+               "other@market": [{"scope": "user", "installPath": "/elsewhere"}]}
+    _installed_plugins(env, json.dumps({"version": 2, "plugins": entries}))
+    assert _run_launcher(env, "dream-run") == "ran old dream-run"
+
+
+@pytest.mark.parametrize("text", [None, "{not json", '{"plugins": {"work@m": [{"scope": "user", "installPath": "/gone"}]}}',
+                                  '{"plugins": []}'])
+def test_launcher_falls_back_to_the_installing_copy(env, text):
+    install(env)
+    _plugin_copy(env, "cached", 2000)
+    if text is not None:
+        _installed_plugins(env, text)
+    assert "dream-run" in _run_launcher(env, "dream-run", "--help")
+    assert "ran cached" not in _run_launcher(env, "dream-run", "--help")
 
 
 def test_init_memory_inits_commits_and_creates_global_claude_md_without_overwriting(env):
@@ -158,3 +180,8 @@ def test_load_ignores_a_failing_bootout_but_reports_a_failing_bootstrap(env, cap
     fake_bin(env.bin, "launchctl", 'if [ "$1" = bootstrap ]; then echo denied >&2; exit 5; fi\nexit 3\n')
     assert install(env, load=True) == 1
     assert "denied" in capsys.readouterr().out
+
+
+def test_load_reports_a_missing_launchctl_instead_of_crashing(env, capsys):
+    assert dream.dream_install(False, True, launchctl=str(env.bin / "absent"), home=env.home) == 1
+    assert "launchctl" in capsys.readouterr().out
