@@ -140,7 +140,7 @@ The work-skills repo names no organization, person or system. Anything org-speci
 - `models`, `caps` and `schedule`
 
 The user's own config gets:
-- the standing DX ticket, created when this is built, titled along the lines of "Agent memory: CLAUDE.md updates from the nightly dream run"
+- the standing ticket, created when this is built, titled along the lines of "Agent memory: CLAUDE.md updates from the nightly dream run"
 - the org's branch and commit rules
 - each repo's default reviewers
 
