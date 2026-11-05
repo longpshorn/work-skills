@@ -1365,7 +1365,8 @@ def extract_access(memory_dir, run_dir):
     memory_rule, run_rule = _rule_path(memory_dir), _rule_path(run_dir)
     return ["--permission-mode", "dontAsk",
             "--allowedTools", "Read", "Glob", "Grep",
-            "Write(%s/**)" % memory_rule, "Edit(%s/**)" % memory_rule, "Write(%s/**)" % run_rule,
+            "Edit(%s/**)" % memory_rule, "Edit(%s/**)" % run_rule,
+            "--disallowedTools", "Edit(%s/_global/**)" % memory_rule,
             "--add-dir", str(Path(memory_dir).resolve()), str(Path(run_dir).resolve())]
 
 
@@ -1554,9 +1555,9 @@ def _run_dir(now):
     return Path(tempfile.mkdtemp(prefix=now.strftime("%Y%m%dT%H%M%S-"), dir=str(parent)))
 
 
-def _stage(cfg, mode, skill, run_dir, digests, env):
+def _stage(cfg, mode, skill, run_dir, digests, env, today):
     caps = cfg["caps"]
-    system = extract_system(skill, run_dir, digests, cfg["memory_dir"])
+    system = extract_system(skill, run_dir, digests, cfg["memory_dir"], today.isoformat())
     cmd = claude_command(cfg, cfg["models"]["extract"], system, caps["turns_extract"], caps["budget_extract_usd"],
                          access=extract_access(cfg["memory_dir"], run_dir))
     prompt = "%s mode: %s. Follow the skill named in the system prompt." % (MARKER, mode)
@@ -1564,13 +1565,13 @@ def _stage(cfg, mode, skill, run_dir, digests, env):
                      timeout=caps["timeout_extract"])
     if not got["ok"]:
         raise StageFailed(got["error"])
-    _apply_direct_ops(cfg, mode, run_dir)
+    _apply_direct_ops(cfg, mode, run_dir, today)
 
 
 DIRECT_OPS = ("retire", "index")
 
 
-def _apply_direct_ops(cfg, mode, run_dir):
+def _apply_direct_ops(cfg, mode, run_dir, today):
     """Apply the stage's merge and reorganize retirements from ops.json; only retire and index ops are allowed."""
     path = Path(run_dir) / "ops.json"
     if not path.exists():
@@ -1585,7 +1586,7 @@ def _apply_direct_ops(cfg, mode, run_dir):
         if not isinstance(op, dict) or op.get("op") not in DIRECT_OPS or "root" in op:
             raise StageFailed("ops.json may hold only retire and index ops on the memory folder: %r" % (op,))
     try:
-        apply_ops(ops, cfg["memory_dir"], None, dt.date.today(), cfg["caps"])
+        apply_ops(ops, cfg["memory_dir"], None, today, cfg["caps"])
     except ValueError as exc:
         raise StageFailed("ops.json not applied: %s" % exc)
     os.replace(str(path), str(Path(run_dir) / ("ops-applied-%s.json" % mode)))
@@ -1597,9 +1598,9 @@ def _require_check(cfg):
         raise StageFailed("dream-check: %s" % "; ".join(problems))
 
 
-def _reorganize(cfg, skill, run_dir, env, state):
+def _reorganize(cfg, skill, run_dir, env, state, today):
     """The one-time first-run pass, committed on its own; returns the new reset point."""
-    _stage(cfg, "reorganize", skill, run_dir, [], env)
+    _stage(cfg, "reorganize", skill, run_dir, [], env, today)
     _require_check(cfg)
     head = commit_run(cfg["memory_dir"], REORGANIZE_SUBJECT + "\n")
     state["reorganized"] = True
@@ -1831,9 +1832,9 @@ def _run_locked(cfg, now, force, skill, say):
             return 0
         if not state["reorganized"]:
             say("first-run reorganization")
-            reset_point = _reorganize(cfg, skill, run_dir, env, state)
+            reset_point = _reorganize(cfg, skill, run_dir, env, state, today)
         say("extracting")
-        _stage(cfg, "extract", skill, run_dir, [d["path"] for d in digests], env)
+        _stage(cfg, "extract", skill, run_dir, [d["path"] for d in digests], env, today)
         say("reviewing checks")
         promotions = _review(_load_checks(run_dir), cfg, today, run_dir, env, state, notes)
         _require_check(cfg)
