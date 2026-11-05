@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1370,27 +1371,45 @@ def _final_result(stream):
     return last
 
 
+def _kill_group(proc):
+    """Kill the stage and everything it started (its Bash tool children hold the pipes open)."""
+    try:
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def run_claude(cmd, prompt, env, log_path, cwd, timeout=None):
     if not prompt.startswith(MARKER):
         raise ValueError("the prompt must start with %s so gather skips this run" % MARKER)
     if not shutil.which(cmd[0], path=env.get("PATH")):
         raise ClaudeMissing("%s was not found on PATH" % cmd[0])
     try:
-        done = subprocess.run(cmd, input=prompt.encode("utf-8"), capture_output=True, env=env,
-                              cwd=str(cwd), timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "result": "", "error": "timed out after %ss" % timeout}
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=env, cwd=str(cwd), start_new_session=os.name != "nt")
     except OSError as exc:
         return {"ok": False, "result": "", "error": "could not run %s: %s" % (cmd[0], exc)}
-    out = done.stdout.decode("utf-8", "replace")
+    try:
+        stdout, stderr = proc.communicate(prompt.encode("utf-8"), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        return {"ok": False, "result": "", "error": "timed out after %ss" % timeout}
+    out = stdout.decode("utf-8", "replace")
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(out, encoding="utf-8")
     final = _final_result(out)
     text = str((final or {}).get("result") or "")
-    if done.returncode != 0:
-        tail = done.stderr.decode("utf-8", "replace").strip()[-300:]
-        error = "claude exited %d%s" % (done.returncode, ": " + tail if tail else "")
+    if proc.returncode != 0:
+        tail = stderr.decode("utf-8", "replace").strip()[-300:]
+        error = "claude exited %d%s" % (proc.returncode, ": " + tail if tail else "")
     elif final is None:
         error = "claude produced no result event"
     elif final.get("is_error"):

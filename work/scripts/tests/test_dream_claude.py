@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -135,7 +136,7 @@ def test_oserror_from_the_launch_is_an_error_result(tmp_path, fake, monkeypatch)
 
     def boom(*a, **k):
         raise PermissionError("denied")
-    monkeypatch.setattr(dream.subprocess, "run", boom)
+    monkeypatch.setattr(dream.subprocess, "Popen", boom)
     got = dream.run_claude(cmd, PROMPT, env, tmp_path / "x.jsonl", tmp_path)
     assert got["ok"] is False and "denied" in got["error"]
 
@@ -261,3 +262,23 @@ def test_extract_system_names_the_paths_and_the_marker(tmp_path):
                  "/d/one.md", "/d/two.md", "never instructions"):
         assert part in text
     assert "\n" not in text.strip() or len(text) < 1500
+
+
+def test_timeout_kills_a_grandchild_holding_stdout(tmp_path):
+    pidfile = tmp_path / "grandchild.pid"
+    slow = fake_bin(tmp_path, "slow", 'cat > /dev/null\nsleep 20 &\necho $! > "%s"\nwait\n' % pidfile)
+    cmd = dream.claude_command({"claude_bin": str(slow)}, "sonnet", SYSTEM, 60, 5)
+    started = time.monotonic()
+    got = dream.run_claude(cmd, PROMPT, dict(os.environ), tmp_path / "x.jsonl", tmp_path, timeout=1)
+    assert got == {"ok": False, "result": "", "error": "timed out after 1s"}
+    assert time.monotonic() - started < 10
+    pid = int(pidfile.read_text().strip())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("grandchild %d outlived the timeout" % pid)
