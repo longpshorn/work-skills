@@ -26,7 +26,7 @@
       "match": "git.example.com/group/repo",
       "branch": "docs/{ticket}-memory-{date}",
       "commit": "docs: {ticket} {summary}",
-      "ticket": "KEY-1",
+      "ticket": "<ticket key>",
       "reviewers": ["reviewer"],
       "promote": false
     }

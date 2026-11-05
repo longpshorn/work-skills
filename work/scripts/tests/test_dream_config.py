@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,7 @@ def test_cli_dispatch_needs_no_work_store(dream_env, monkeypatch, tmp_path):
 
 
 def test_example_config_parses():
-    data = json.loads(dream.strip_comments(EXAMPLE.read_text(encoding="utf-8")))
-    allowed = set(dream.DEFAULTS) | {"memory_dir", "global_claude_md"}
-    assert set(data) <= allowed
-    assert set(data) == allowed
+    text = EXAMPLE.read_text(encoding="utf-8")
+    data = json.loads(dream.strip_comments(text))
+    assert set(data) == set(dream.DEFAULTS) | {"memory_dir", "global_claude_md"}
+    assert not re.search(r"[A-Z]{2,}-\d+", text)
