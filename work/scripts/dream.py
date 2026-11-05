@@ -5,8 +5,10 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -1056,3 +1058,165 @@ def _check_command(args):
     for problem in problems:
         print(problem, file=sys.stderr)
     return 1 if problems else 0
+
+
+MR_BODY = ("Automated memory promotion from the nightly dream run: it proposes changes to this "
+           "file from what recent sessions learned. Awaiting human review; nothing is merged automatically.")
+_URL = re.compile(r"https?://\S+")
+
+
+def rule_for(origin_url, cfg):
+    for rule in cfg.get("repos", []):
+        if rule.get("match") and rule["match"] in origin_url and rule.get("promote") is True:
+            return rule
+    return None
+
+
+def forge_of(origin_url):
+    if "//" in origin_url:
+        host = origin_url.split("//", 1)[1].split("/", 1)[0]
+    elif ":" in origin_url and not origin_url.startswith(("/", ".")):
+        host = origin_url.split(":", 1)[0]
+    else:
+        return None
+    host = host.rsplit("@", 1)[-1].casefold()
+    if "github.com" in host:
+        return "github"
+    if "gitlab" in host:
+        return "gitlab"
+    return None
+
+
+def _forge(args, cwd):
+    try:
+        done = subprocess.run(args, cwd=str(cwd), capture_output=True, timeout=GIT_TIMEOUT)
+    except FileNotFoundError:
+        raise ConfigError("%s was not found on PATH" % args[0])
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigError("%s failed: %s" % (args[0], exc))
+    if done.returncode != 0:
+        raise ConfigError("%s failed: %s" % (" ".join(args[:3]), done.stderr.decode("utf-8", "replace").strip()))
+    return done.stdout.decode("utf-8", "replace")
+
+
+def mr_is_open(forge, url):
+    if forge == "github":
+        return _forge(["gh", "pr", "view", url, "--json", "state", "-q", ".state"], ".").strip() == "OPEN"
+    return str(json.loads(_forge(["glab", "mr", "view", url, "-F", "json"], ".")).get("state")) == "opened"
+
+
+def create_mr(forge, repo, branch, base, title, body, reviewers):
+    reviewers = ",".join(reviewers or [])
+    if forge == "github":
+        args = ["gh", "pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body]
+        if reviewers:
+            args += ["--reviewer", reviewers]
+    else:
+        args = ["glab", "mr", "create", "--source-branch", branch, "--target-branch", base,
+                "--title", title, "--description", body, "--yes"]
+        if reviewers:
+            args += ["--reviewer", reviewers]
+    found = _URL.findall(_forge(args, repo))
+    if not found:
+        raise ConfigError("%s printed no merge request URL" % args[0])
+    return found[-1]
+
+
+def _default_branch(repo):
+    for attempt in range(2):
+        done = _git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], check=False)
+        if done.returncode == 0:
+            return done.stdout.decode("utf-8", "replace").strip().split("/", 1)[1]
+        if attempt == 0:
+            _git(repo, ["remote", "set-head", "origin", "--auto"], check=False)
+    raise ConfigError("cannot resolve the default branch of origin")
+
+
+def _has_ref(repo, ref):
+    return _git(repo, ["rev-parse", "-q", "--verify", ref], check=False).returncode == 0
+
+
+def _fill(pattern, **values):
+    for name, value in values.items():
+        if len(str(value).splitlines()) > 1 or not str(value).isprintable():
+            raise ValueError("%s must be one printable line" % name)
+    return pattern.format(**values)
+
+
+def _remember_push_failure(state, repo, branch):
+    entry = {"repo": str(repo), "branch": branch}
+    if entry not in state["pending_pushes"]:
+        state["pending_pushes"].append(entry)
+
+
+def propose(repo, rule, ops, summary, today, state, cfg):
+    repo = Path(repo)
+    origin = _out(repo, ["config", "--get", "remote.origin.url"])
+    forge = forge_of(origin)
+    if forge is None or rule.get("promote") is not True:
+        return None
+    fields = {"ticket": rule.get("ticket", ""), "summary": summary, "date": today.isoformat()}
+    branch = _fill(rule["branch"], **fields)
+    message = _fill(rule["commit"], **fields)
+    if _git(repo, ["check-ref-format", "--branch", branch], check=False).returncode != 0:
+        raise ValueError("invalid branch name: %s" % branch)
+    _git(repo, ["fetch", "-q", "origin"])
+    base = _default_branch(repo)
+    if branch == base:
+        raise ValueError("refusing to use the default branch %s" % base)
+
+    key = str(repo)
+    mr = state["open_mrs"].get(key)
+    if mr:
+        try:
+            still_open = mr_is_open(forge, mr["url"])
+        except ConfigError:
+            return None
+        if not still_open:
+            del state["open_mrs"][key]
+            mr = None
+    if mr:
+        branch = mr["branch"]
+        if branch == base:
+            raise ValueError("refusing to use the default branch %s" % base)
+        start = ["worktree", "add", "-q", "-B", branch, "WT", "origin/" + branch]
+        created = False
+    elif _has_ref(repo, "refs/heads/" + branch):
+        start, created = ["worktree", "add", "-q", "WT", branch], False
+    else:
+        start, created = ["worktree", "add", "-q", "-b", branch, "WT", "origin/" + base], True
+
+    tree = Path(tempfile.mkdtemp(prefix="dream-worktree-"))
+    committed = False
+    try:
+        _git(repo, [str(tree) if a == "WT" else a for a in start])
+        apply_ops(ops, cfg["memory_dir"], tree, today, cfg["caps"])
+        if not _out(tree, ["status", "--porcelain"]):
+            return mr["url"] if mr else None
+        _git(tree, ["add", "-A"])
+        _git(tree, _commit_args(message))
+        committed = True
+        refspec = "refs/heads/%s:refs/heads/%s" % (branch, branch)
+        if _git(tree, ["push", "-q", "origin", refspec], check=False).returncode != 0:
+            _remember_push_failure(state, repo, branch)
+            return None
+        if mr:
+            return mr["url"]
+        url = create_mr(forge, repo, branch, base, message, MR_BODY, rule.get("reviewers"))
+        state["open_mrs"][key] = {"url": url, "branch": branch}
+        return url
+    finally:
+        _git(repo, ["worktree", "remove", "--force", str(tree)], check=False)
+        shutil.rmtree(str(tree), ignore_errors=True)
+        _git(repo, ["worktree", "prune"], check=False)
+        if created and not committed:
+            _git(repo, ["branch", "-D", branch], check=False)
+
+
+def retry_pushes(state):
+    left = []
+    for entry in state["pending_pushes"]:
+        refspec = "refs/heads/%s:refs/heads/%s" % (entry["branch"], entry["branch"])
+        if _git(entry["repo"], ["push", "-q", "origin", refspec], check=False).returncode != 0:
+            left.append(entry)
+    state["pending_pushes"] = left
