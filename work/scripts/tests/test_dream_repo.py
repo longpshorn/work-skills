@@ -349,3 +349,27 @@ def test_retry_pushes_continues_past_a_failing_repo(world):
 
 def test_default_state_has_no_pending_pushes():
     assert "pending_pushes" not in dream.default_state()
+
+
+def test_retry_pushes_retries_a_failed_push_onto_an_existing_mr_branch(world):
+    repo, state = world["repo"], dream.default_state()
+    dream.propose(repo, RULE, op(), "one", TODAY, state, world["cfg"])
+    assert state["open_mrs"][str(repo.resolve())]["number"] == 7
+    hook = block_pushes(world)
+    notes = []
+    dream.propose(repo, RULE, op("# Notes\nmore\n"), "two", TODAY + dt.timedelta(days=1), state, world["cfg"], notes)
+    assert any("push of" in n for n in notes)
+    hook.unlink()
+    dream.retry_pushes(state, world["cfg"], [])
+    assert git(world["bare"], "rev-parse", BRANCH) == git(repo, "rev-parse", BRANCH)
+    assert world["log"].read_text().count("pr create") == 1
+
+
+def test_retry_pushes_leaves_an_up_to_date_mr_branch_alone(world):
+    repo, state = world["repo"], dream.default_state()
+    dream.propose(repo, RULE, op(), "one", TODAY, state, world["cfg"])
+    hook = block_pushes(world)
+    notes = []
+    dream.retry_pushes(state, world["cfg"], notes)
+    hook.unlink()
+    assert notes == []

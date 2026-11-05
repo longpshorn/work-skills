@@ -1326,13 +1326,24 @@ def propose(repo, rule, ops, summary, today, state, cfg, notes=None):
     return _publish(repo, record, base, record.get("title") or message, rule.get("reviewers"), notes)
 
 
+def _unpushed(repo, branch):
+    """Whether refs/heads/<branch> exists and differs from origin's copy after a fetch."""
+    _git(repo, ["fetch", "-q", "origin"])
+    local = _git(repo, ["rev-parse", "-q", "--verify", "refs/heads/" + branch], check=False)
+    if local.returncode != 0:
+        return False
+    remote = _git(repo, ["rev-parse", "-q", "--verify", "refs/remotes/origin/" + branch], check=False)
+    return remote.returncode != 0 or remote.stdout != local.stdout
+
+
 def retry_pushes(state, cfg, notes=None):
-    """Publish every recorded branch that still lacks a merge request, under the same guards as propose."""
+    """Publish every recorded branch that lacks a merge request or whose local tip differs from origin's,
+    under the same guards as propose."""
     notes = [] if notes is None else notes
     for key, record in list(state["open_mrs"].items()):
-        if record.get("number") is not None:
-            continue
         try:
+            if record.get("number") is not None and not _unpushed(Path(key), record["branch"]):
+                continue
             rule = rule_for(_origin_url(key), cfg)
             if rule is None:
                 notes.append("no promote rule for %s" % key)
