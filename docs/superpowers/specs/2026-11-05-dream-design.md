@@ -181,7 +181,7 @@ The user's own config gets:
 6. **Sightings.**
    - Memory frontmatter gains `seen:`, a list of dates on which a conversation supported the fact. `sources:` lists session id and message uuid pairs.
    - "Stated as a rule" means the quote contains the user stating a standing rule. The Opus check confirms it.
-   - Memories written by hand count from their first `seen`, which is backfilled from the file's mtime.
+   - Memories written by hand count from their first `seen`, which `dream-run` backfills from the file's mtime (with an empty `sources:`) before the first-run reorganization.
 7. **Nothing private reaches a repo file.** Only facts about the repo's own code, commands, conventions and tooling are promotable to that repo. Facts about people, strategy, customers or credentials, and the user's personal preferences, never are. Personal preferences go to global only. The Opus check enforces this and rejects anything doubtful.
 8. **First run.** It is a one-time reorganization, committed on its own before any extraction:
    - normalize frontmatter (add missing fields, keep existing ones)

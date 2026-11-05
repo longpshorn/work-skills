@@ -123,7 +123,7 @@ A **contradiction** uses only memory ops: typically a retire of the old memory p
 
 The one-time first run, before any extraction; there are no digests. Make the folder well organized without changing what any memory means:
 
-- normalize frontmatter: add a missing `name`, `description` or `metadata.type`, and a `seen:` date backfilled from the file's modification time, keeping every existing field
+- normalize frontmatter: add a missing `name`, `description` or `metadata.type`, keeping every existing field (`dream-run` has already filled a missing `seen:` and `sources:`)
 - regroup `MEMORY.md` under the topic headings above, one line per memory
 - merge clear duplicates, the survivor keeping every fact and every `seen:` and `sources:` entry of the files it absorbs
 - retire memories that a newer memory or the current code contradicts, with `superseded_by:`. Check code read-only against the path the memory names, with Read, Grep and Glob. When that path is missing or is not a checkout, or a contradiction rests on code alone and is uncertain, mark the memory `unverified: <today>` instead of retiring it.

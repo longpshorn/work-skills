@@ -316,7 +316,7 @@ def test_first_run_commits_reorganization_before_extraction(world):
     assert run() == 0
     today = dt.date.today().isoformat()
     assert subjects(world) == ["init", "dream: first-run reorganization", "dream: %s" % today]
-    assert git(world.mem, "show", "--name-only", "--format=", "HEAD~1") == "MEMORY.md"
+    assert git(world.mem, "show", "--name-only", "--format=", "HEAD~1") == "MEMORY.md\nold.md"
     assert dream.load_state()["reorganized"] is True
     assert calls(world) == ["reorganize", "extract"]
     talk(world, 3)
@@ -689,3 +689,31 @@ def test_max_digests_passes_the_oldest_and_leaves_the_rest_for_the_next_night(wo
 
 def test_max_digests_defaults_to_forty():
     assert dream.DEFAULTS["caps"]["max_digests"] == 40
+
+
+def test_first_run_backfills_seen_and_sources_from_mtime_in_the_reorganization_commit(world):
+    state = dream.load_state()
+    state["reorganized"] = False
+    dream.save_state(state)
+    kept = memfile("kept").replace("---\nBody", "seen: [2026-01-01]\nsources: [s:u]\n---\nBody")
+    (world.mem / "kept.md").write_text(kept, encoding="utf-8")
+    (world.mem / "MEMORY.md").write_text(index("old", "kept"), encoding="utf-8")
+    stamp = dt.datetime(2026, 3, 4, 12, 0).timestamp()
+    os.utime(str(world.mem / "old.md"), (stamp, stamp))
+    talk(world, 3)
+    world.plan({"reorganize": {}, "extract": {}})
+    assert run() == 0
+    reorg = git(world.mem, "log", "--format=%H", "--grep", "first-run reorganization")
+    old = dream.parse_memory(git(world.mem, "show", "%s:old.md" % reorg))
+    assert old["seen"] == ["2026-03-04"] and old["sources"] == []
+    assert old["name"] == "old" and old["metadata"] == {"type": "feedback"}
+    assert dream.parse_memory(git(world.mem, "show", "%s:kept.md" % reorg))["seen"] == ["2026-01-01"]
+    assert dream.parse_memory(git(world.mem, "show", "%s:kept.md" % reorg))["sources"] == ["s:u"]
+
+
+def test_backfill_skips_files_without_frontmatter(tmp_path):
+    (tmp_path / "bad.md").write_text("no frontmatter\n", encoding="utf-8")
+    (tmp_path / "MEMORY.md").write_text("## x\n", encoding="utf-8")
+    dream.backfill_frontmatter(tmp_path)
+    assert (tmp_path / "bad.md").read_text(encoding="utf-8") == "no frontmatter\n"
+    assert (tmp_path / "MEMORY.md").read_text(encoding="utf-8") == "## x\n"

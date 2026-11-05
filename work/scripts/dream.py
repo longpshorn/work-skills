@@ -940,6 +940,28 @@ def mark_promoted(memory_dir, memory_rel, promoted_to):
     _put(path, _stamp(text, {"promoted_to": promoted_to}).encode("utf-8"))
 
 
+def backfill_frontmatter(memory_dir):
+    """Give each live memory a `seen:` date from its modification time and an empty `sources:` when missing.
+
+    Files whose frontmatter cannot be read are left for the reorganize stage."""
+    for path in sorted(Path(memory_dir).glob("*.md")):
+        if path.name == "MEMORY.md" or path.is_symlink():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            meta = parse_memory(text)
+            day = dt.date.fromtimestamp(path.stat().st_mtime)
+        except (OSError, ValueError):
+            continue
+        fields = {}
+        if "seen" not in meta:
+            fields["seen"] = "[%s]" % day.isoformat()
+        if "sources" not in meta:
+            fields["sources"] = "[]"
+        if fields:
+            _put(path, _stamp(text, fields).encode("utf-8"))
+
+
 GIT_TIMEOUT = 120
 RETIRED_DIR = "_retired"
 INSTALL_HINT = "memory folder is not a git repo; run dream-install --init-memory"
@@ -1630,6 +1652,7 @@ def _require_check(cfg):
 
 def _reorganize(cfg, skill, run_dir, env, state, today):
     """The one-time first-run pass, committed on its own; returns the new reset point."""
+    backfill_frontmatter(cfg["memory_dir"])
     _stage(cfg, "reorganize", skill, run_dir, [], env, today)
     _require_check(cfg)
     head = commit_run(cfg["memory_dir"], REORGANIZE_SUBJECT + "\n")
