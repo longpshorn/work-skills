@@ -116,6 +116,9 @@ def add_parsers(sub):
     parsers["dream-gather"].add_argument("--since", help="ISO time bounding a first run (default: now minus first_run_days)")
     parsers["dream-gather"].add_argument("--out", help="digest folder (default: <state>/digests)")
     parsers["dream-check"].add_argument("--memory-dir", help="memory folder (default: the configured memory_dir)")
+    parsers["dream-run"].add_argument("--now", action="store_true",
+                                      help="run even with fewer ended conversations than min_conversations")
+    parsers["dream-run"].add_argument("--skill", help="skill file the stages follow (default: the dream skill)")
     return parsers
 
 
@@ -126,6 +129,8 @@ def run_command(args):
         return _status_command()
     if args.cmd == "dream-check":
         return _check_command(args)
+    if args.cmd == "dream-run":
+        return dream_run(dt.datetime.now(), args.now, args.skill)
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
 
@@ -349,7 +354,8 @@ def gather(highwater, since, now, out_dir, cfg):
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / (path.stem + ".md")
         target.write_text(_digest(header, turns, agent_session), encoding="utf-8")
-        results.append({"session": path.stem, "project": path.parent.name, "cwd": cwd or None, "repo": repo,
+        results.append({"session": path.stem, "project": path.parent.name, "transcript": str(path),
+                        "cwd": cwd or None, "repo": repo,
                         "digest": target.read_text(encoding="utf-8"), "path": str(target),
                         "last_uuid": last_uuid, "mtime": mtime, "first": first, "last": last,
                         "agent_session": agent_session})
@@ -366,7 +372,7 @@ def _gather_command(args):
     raw = args.since.replace("Z", "+00:00") if args.since else None
     since = dt.datetime.fromisoformat(raw) if raw else now - dt.timedelta(days=cfg["caps"]["first_run_days"])
     out_dir = Path(args.out) if args.out else state_dir() / "digests"
-    print(json.dumps(gather({}, since, now, out_dir, cfg), indent=2))
+    print(json.dumps(gather(load_state()["transcripts"], since, now, out_dir, cfg), indent=2))
     return 0
 
 
@@ -1484,3 +1490,269 @@ def opus_check(item, memory_text, target_text, cfg, run_dir, env=None):
         raise
     except Exception as exc:
         return False, "check failed: %s" % exc
+
+
+# ---- the nightly run ----
+
+SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "dream" / "SKILL.md"
+REORGANIZE_SUBJECT = "dream: first-run reorganization"
+
+
+class StageFailed(Exception):
+    pass
+
+
+def _one_line(text):
+    return " ".join(str(text).split())
+
+
+def _log(today, read, counts, mrs, ok, reason, notes):
+    line = log_line(today, read, counts, mrs, ok, _one_line(reason) if reason is not None else None)
+    if notes:
+        line += " | notes: " + "; ".join(_one_line(note) for note in notes)
+    append_log(line)
+
+
+def _require_claude(cfg, env):
+    claude = cfg.get("claude_bin") or "claude"
+    if not shutil.which(claude, path=env.get("PATH")):
+        raise ClaudeMissing("%s was not found on PATH" % claude)
+
+
+def _run_dir(now):
+    parent = state_dir() / "runs"
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=now.strftime("%Y%m%dT%H%M%S-"), dir=str(parent)))
+
+
+def _stage(cfg, mode, skill, run_dir, digests, env):
+    caps = cfg["caps"]
+    system = extract_system(skill, run_dir, digests, cfg["memory_dir"])
+    cmd = claude_command(cfg, cfg["models"]["extract"], system, caps["turns_extract"], caps["budget_extract_usd"])
+    prompt = "%s mode: %s. Follow the skill named in the system prompt." % (MARKER, mode)
+    got = run_claude(cmd, prompt, env, run_dir / ("%s.jsonl" % mode), cfg["memory_dir"],
+                     timeout=caps["timeout_extract"])
+    if not got["ok"]:
+        raise StageFailed(got["error"])
+
+
+def _require_check(cfg):
+    problems = check_memory(cfg["memory_dir"], cfg["caps"])
+    if problems:
+        raise StageFailed("dream-check: %s" % "; ".join(problems))
+
+
+def _reorganize(cfg, skill, run_dir, env, state):
+    """The one-time first-run pass, committed on its own; returns the new reset point."""
+    _stage(cfg, "reorganize", skill, run_dir, [], env)
+    _require_check(cfg)
+    head = commit_run(cfg["memory_dir"], REORGANIZE_SUBJECT + "\n")
+    state["reorganized"] = True
+    save_state(state)
+    return head
+
+
+def _load_checks(run_dir):
+    path = run_dir / "checks.json"
+    if not path.exists():
+        return []
+    try:
+        items = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise StageFailed("unreadable checks.json: %s" % exc)
+    if not isinstance(items, list):
+        raise StageFailed("checks.json is not a list")
+    return items
+
+
+def _is_target_op(op):
+    return isinstance(op, dict) and op.get("op") == "write" and op.get("root") == "target"
+
+
+def _read_text(path):
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return ""
+
+
+def _promotion_root(target, cfg):
+    """The folder a promotion writes into and its repo rule (None for global); raises when not allowed."""
+    if target == "global":
+        return cfg["global_claude_md"].parent, None
+    if not isinstance(target, str) or not target:
+        raise ValueError("promotion has no target")
+    rule = rule_for(_origin_url(target), cfg)
+    if rule is None:
+        raise ValueError("no promote rule for repo %s" % target)
+    return Path(target).resolve(), rule
+
+
+def _vet(item, cfg, today, promoted):
+    """Everything about an item that can be decided without the reviewer; raises ValueError to drop it."""
+    if not isinstance(item, dict):
+        raise ValueError("item is not an object")
+    kind, ops = item.get("kind"), item.get("ops")
+    if kind not in ("contradiction", "promotion"):
+        raise ValueError("unknown kind %r" % (kind,))
+    if not isinstance(ops, list) or not ops:
+        raise ValueError("item has no ops")
+    memory_dir, caps = cfg["memory_dir"], cfg["caps"]
+    memory = safe_path(memory_dir, item.get("memory"))
+    vetted = {"item": item, "memory_ops": [op for op in ops if not _is_target_op(op)],
+              "target_ops": [op for op in ops if _is_target_op(op)],
+              "memory_text": _read_text(memory), "target_text": None, "target": None}
+    _plan(vetted["memory_ops"], memory_dir, None, today, caps)
+    if kind == "contradiction":
+        if vetted["target_ops"]:
+            raise ValueError("a contradiction may only change the memory folder")
+        return vetted
+    if promoted >= caps["promotions"]:
+        raise ValueError("over the cap of %d promotions" % caps["promotions"])
+    if not memory.is_file():
+        raise ValueError("promotion names a missing memory %s" % item.get("memory"))
+    if "promoted_to" in parse_memory(vetted["memory_text"]):
+        raise ValueError("%s is already promoted" % item.get("memory"))
+    if not vetted["target_ops"]:
+        raise ValueError("promotion has no target write")
+    root, rule = _promotion_root(item.get("target"), cfg)
+    _plan(vetted["target_ops"], memory_dir, root, today, caps)
+    first = root / vetted["target_ops"][0]["path"]
+    vetted.update(target=item.get("target"), root=root, rule=rule, promoted_to=str(first),
+                  target_text=_read_text(first))
+    return vetted
+
+
+def _review(items, cfg, today, run_dir, env, notes):
+    """Opus-check each item and apply its approved memory ops; returns the approved promotions."""
+    promotions = []
+    for item in items:
+        label = item.get("id") if isinstance(item, dict) else None
+        try:
+            vetted = _vet(item, cfg, today, len(promotions))
+        except (ValueError, ConfigError) as exc:
+            notes.append("item %s dropped: %s" % (label, exc))
+            continue
+        approved, reason = opus_check(item, vetted["memory_text"], vetted["target_text"], cfg, run_dir, env)
+        if not approved:
+            notes.append("item %s rejected: %s" % (label, reason))
+            continue
+        try:
+            apply_ops(vetted["memory_ops"], cfg["memory_dir"], None, today, cfg["caps"])
+        except ValueError as exc:
+            notes.append("item %s not applied: %s" % (label, exc))
+            continue
+        if item["kind"] == "promotion":
+            mark_promoted(cfg["memory_dir"], item["memory"], vetted["promoted_to"])
+            promotions.append(vetted)
+    return promotions
+
+
+def _write_global(promotions, cfg, today, backups):
+    """Apply global promotions, keeping each touched file's prior bytes in `backups` for a failed run."""
+    for vetted in promotions:
+        for op in vetted["target_ops"]:
+            path = vetted["root"] / op["path"]
+            if path not in backups:
+                backups[path] = path.read_bytes() if path.is_file() else None
+        apply_ops(vetted["target_ops"], cfg["memory_dir"], vetted["root"], today, cfg["caps"])
+
+
+def _restore_global(backups):
+    failed = _undo_all(list(backups.items()))
+    return "; global files not restored: %s" % ", ".join(str(p) for p in failed) if failed else ""
+
+
+def _propose_all(promotions, cfg, today, state, notes):
+    """One merge request per repo for its approved promotions; failures become notes."""
+    by_repo = {}
+    for vetted in promotions:
+        by_repo.setdefault(vetted["root"], []).append(vetted)
+    mrs = []
+    for repo, group in by_repo.items():
+        ops = [op for vetted in group for op in vetted["target_ops"]]
+        summary = "; ".join(_one_line(v["item"].get("summary") or "memory promotion") for v in group)
+        try:
+            url = propose(repo, group[0]["rule"], ops, summary, today, state, cfg, notes)
+        except (ValueError, ConfigError, OSError) as exc:
+            notes.append("promotion to %s not proposed: %s" % (repo, exc))
+            continue
+        if url:
+            mrs.append(url)
+    return mrs
+
+
+def _run_locked(cfg, now, force, skill, say):
+    today, memory_dir, caps = now.date(), cfg["memory_dir"], cfg["caps"]
+    notes, backups = [], {}
+    state = load_state()
+    state["last_run"] = now.isoformat(timespec="seconds")
+    say("retrying unpublished promotions")
+    retry_pushes(state, cfg, notes)
+    save_state(state)
+    env = claude_env(dict(os.environ))
+    read, reset_point = 0, None
+    try:
+        _require_claude(cfg, env)
+        reset_point = snapshot(memory_dir, today)
+        copy_global(memory_dir, cfg["global_claude_md"])
+        reset_point = _head(memory_dir)
+        run_dir = _run_dir(now)
+        say("gathering conversations")
+        since = now - dt.timedelta(days=caps["first_run_days"])
+        digests = gather(state["transcripts"], since, now, run_dir / "digests", cfg)
+        read = len(digests)
+        if read < caps["min_conversations"] and not force:
+            _log(today, read, {}, [], True, None, notes)
+            return 0
+        if not state["reorganized"]:
+            say("first-run reorganization")
+            reset_point = _reorganize(cfg, skill, run_dir, env, state)
+        say("extracting")
+        _stage(cfg, "extract", skill, run_dir, [d["path"] for d in digests], env)
+        say("reviewing checks")
+        promotions = _review(_load_checks(run_dir), cfg, today, run_dir, env, notes)
+        _require_check(cfg)
+        changes = changes_since(memory_dir, reset_point)
+        changes["promoted"] = [_memory_name(v["item"]["memory"].replace("\\", "/")) for v in promotions]
+        _write_global([v for v in promotions if v["target"] == "global"], cfg, today, backups)
+        commit_run(memory_dir, commit_message([d["session"] for d in digests], changes, today))
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        reason += _restore_global(backups)
+        if reset_point is not None:
+            try:
+                reset_to(memory_dir, reset_point)
+            except ConfigError as reset_exc:
+                reason += "; reset failed: %s" % reset_exc
+        _log(today, read, {}, [], False, reason, notes)
+        return 1
+    try:
+        for digest in digests:
+            state["transcripts"][digest["transcript"]] = {"uuid": digest["last_uuid"], "mtime": digest["mtime"]}
+        state["last_success"] = today.isoformat()
+        save_state(state)
+        say("proposing repo promotions")
+        mrs = _propose_all([v for v in promotions if v["target"] != "global"], cfg, today, state, notes)
+        save_state(state)
+    except Exception as exc:
+        _log(today, read, {}, [], False, "after the memory commit: %s" % exc, notes)
+        return 1
+    _log(today, read, {key: len(names) for key, names in changes.items()}, mrs, True, None, notes)
+    return 0
+
+
+def dream_run(now, force, skill, progress=None):
+    """One consolidation pass; 0 on success or a quiet skip, 1 on failure. Prints nothing on success."""
+    today = now.date()
+    say = progress or (lambda message: None)
+    try:
+        cfg = load_config()
+    except ConfigError as exc:
+        _log(today, 0, {}, [], False, exc, [])
+        return 1
+    try:
+        with RunLock():
+            return _run_locked(cfg, now, force, Path(skill) if skill else SKILL_PATH, say)
+    except Busy:
+        return 0

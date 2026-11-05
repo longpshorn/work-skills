@@ -168,3 +168,17 @@ def test_flag_text_annotates(body, flag):
 
 def test_flag_text_is_empty_for_plain_text():
     assert dream.flag_text("please add a button") == []
+
+
+def test_cli_uses_the_stored_highwater_and_names_the_transcript(dream_env, tmp_path, capsys):
+    dream_env.config.parent.mkdir(parents=True)
+    dream_env.config.write_text(json.dumps({"memory_dir": str(tmp_path / "mem")}), encoding="utf-8")
+    old = time.time() - 3 * 3600
+    seen = write_transcript(dream_env.projects, "p", "s1", [user("hi", "u1")], mtime=old)
+    fresh = write_transcript(dream_env.projects, "p", "s2", [user("hello", "u2")], mtime=old)
+    state = dream.default_state()
+    state["transcripts"][str(seen)] = {"uuid": "u1", "mtime": old}
+    dream.save_state(state)
+    assert work.main(["dream-gather", "--out", str(tmp_path / "o")]) == 0
+    [entry] = json.loads(capsys.readouterr().out)
+    assert entry["session"] == "s2" and entry["transcript"] == str(fresh)
