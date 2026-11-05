@@ -172,7 +172,11 @@ def test_run_arm_isolates_the_run_with_a_fake_claude(tmp_path, monkeypatch):
     work = tmp_path / "work"
     memory = run.run_arm("correction", "baseline", work, confirm_paid=True)
     log = seen.read_text(encoding="utf-8")
-    assert "--setting-sources project,local" in log and "baseline-skill.md" in log
+    calls = [line for line in log.splitlines() if line.startswith("-p ")]
+    assert calls and all(line.count("--setting-sources project,local") == 1 for line in calls)
+    assert "baseline-skill.md" in log
+    config = json.loads((work / "config" / "dream.json").read_text(encoding="utf-8"))
+    assert config["claude_bin"] == str(fake) and not (work / "bin").exists()
     assert "WORK_STORE" not in log and "MY_API_TOKEN" not in log and "ANTHROPIC_X=keep" in log
     assert "WORK_DREAM_STATE=%s" % (work / "state") in log
     assert memory == work / "memory" and (memory / ".git").is_dir()

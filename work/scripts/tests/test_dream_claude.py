@@ -54,6 +54,7 @@ def test_command_has_the_cheap_flag_set_and_no_prompt_argument():
     assert cmd == ["claude", "-p", "--model", "sonnet", "--system-prompt", SYSTEM,
                    "--tools", TOOLS, "--strict-mcp-config",
                    "--disable-slash-commands", "--settings", '{"disableAllHooks":true}',
+                   "--setting-sources", "project,local",
                    "--max-turns", "60", "--max-budget-usd", "5", "--no-session-persistence",
                    "--output-format", "stream-json", "--verbose"]
     assert PROMPT not in cmd

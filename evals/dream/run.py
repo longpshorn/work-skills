@@ -67,11 +67,6 @@ def prepare(scenario: str, workdir: Path, model: str, claude: str) -> Path:
         shutil.copyfile(transcript, target)
         os.utime(target, (aged, aged))
     (workdir / "CLAUDE.md").write_text(GLOBAL_MD, encoding="utf-8")
-    bin_dir = workdir / "bin"
-    bin_dir.mkdir()
-    wrapper = bin_dir / "claude"
-    wrapper.write_text('#!/bin/sh\nexec "%s" --setting-sources project,local "$@"\n' % claude, encoding="utf-8")
-    wrapper.chmod(0o755)
     (workdir / "state").mkdir()
     (workdir / "state" / "state.json").write_text(json.dumps(
         {"version": 1, "transcripts": {}, "last_run": None, "last_success": None,
@@ -79,7 +74,7 @@ def prepare(scenario: str, workdir: Path, model: str, claude: str) -> Path:
     (workdir / "config").mkdir()
     (workdir / "config" / "dream.json").write_text(json.dumps({
         "memory_dir": str(memory), "global_claude_md": str(workdir / "CLAUDE.md"),
-        "claude_bin": str(wrapper), "repos": [], "agent_prompts": [],
+        "claude_bin": claude, "repos": [], "agent_prompts": [],
         "models": {"extract": model, "check": model},
         "caps": {"budget_extract_usd": EXTRACT_CAP_USD, "budget_check_usd": CHECK_CAP_USD}}), encoding="utf-8")
     return memory

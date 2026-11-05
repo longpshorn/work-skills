@@ -36,9 +36,8 @@ and a stand-in global instructions file. `WORK_DREAM_CONFIG`, `WORK_DREAM_STATE`
 point at those, and the run executes `work-tools dream-run --now` (arm `baseline` adds `--skill
 evals/dream/baseline-skill.md`). Both stages use the default model.
 
-The run does not inherit the owner's setup: `claude` is called through a wrapper that adds
-`--setting-sources project,local`, so user settings, plugins and hooks (including the owner's `env`
-block) are not read; `WORK_STORE` and every secret-shaped variable except `ANTHROPIC_*` and `CLAUDE_*`
+The run executes exactly the command that ships: both stages pass `--setting-sources project,local`, so
+user settings, plugins and hooks (including the owner's `env` block and allow rules) are not read; `WORK_STORE` and every secret-shaped variable except `ANTHROPIC_*` and `CLAUDE_*`
 are removed from the environment.
 
 ## Scenarios and oracle checks
@@ -80,4 +79,4 @@ python -m pytest work/scripts/tests/test_dream_evals.py -q
 
 They run in the repo's normal test command and CI: the grader on hand-built passing and failing trees, the
 refusal without `--confirm-paid`, `--dry-run`, and a full `run_arm` against a fake `claude` that checks
-the isolation (wrapper flag, stripped environment, pinned paths).
+the isolation (the shipped `--setting-sources` flag, stripped environment, pinned paths).

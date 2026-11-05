@@ -1399,6 +1399,7 @@ def claude_command(cfg, model, system, max_turns, budget, tools=EXTRACT_TOOLS, a
     return [cfg.get("claude_bin") or "claude", "-p", "--model", model, "--system-prompt", system,
             "--tools", tools, "--strict-mcp-config",
             "--disable-slash-commands", "--settings", '{"disableAllHooks":true}',
+            "--setting-sources", "project,local",
             "--max-turns", str(max_turns), "--max-budget-usd", str(budget), "--no-session-persistence",
             "--output-format", "stream-json", "--verbose"] + list(access)
 

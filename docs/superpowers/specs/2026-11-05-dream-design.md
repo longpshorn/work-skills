@@ -117,6 +117,7 @@ Use the measured cheap invocation from the user's headless notes:
 - `--system-prompt` with a short prompt that names `/work:dream` and the digest paths
 - `--tools` restricted to the file tools, Bash and ToolSearch, with `--disallowedTools mcp__<server>` for every MCP server (the run needs none)
 - `--disable-slash-commands`, and `--settings '{"disableAllHooks":true}'`
+- `--setting-sources project,local`, so the user's own settings (allow rules, `env`, plugins) never reach the stages; the login stays in the keychain
 - the prompt on stdin
 - `MCP_CONNECTION_NONBLOCKING=false`, and `USER` and `LOGNAME` set for the keychain login
 - `--output-format stream-json --verbose` saved per run, so a failure can be diagnosed

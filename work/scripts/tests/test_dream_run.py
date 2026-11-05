@@ -608,6 +608,8 @@ def test_extract_stage_is_confined_to_the_memory_and_run_folders_and_runs_no_com
     assert "Bash" not in extract[extract.index("--tools") + 1].split(",")
     check = next(a for a in argvs if a[0] == "check")
     assert "--permission-mode" not in check and check[check.index("--tools") + 1] == ""
+    for argv in (extract, check):
+        assert argv[argv.index("--setting-sources") + 1] == "project,local"
 
 
 def test_a_merge_retires_the_absorbed_file_through_ops_json(world):
