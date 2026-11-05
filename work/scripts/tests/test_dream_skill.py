@@ -1,0 +1,141 @@
+import os
+import re
+from pathlib import Path
+
+import pytest
+
+import work
+from test_launcher import compact_hook_command
+
+PLUGIN = Path(work.__file__).resolve().parents[1]
+REPO = PLUGIN.parent
+SKILL = PLUGIN / "skills" / "dream" / "SKILL.md"
+
+TICKET_KEY = re.compile(r"[A-Z]{2,}-\d+")
+ALLOWED_KEYS = {"KEY-1", "UTF-8"}
+
+DENYLIST_ENV = "WORK_PORTABILITY_DENYLIST"
+DENYLIST_DEFAULT = "~/.config/work/portability-denylist.txt"
+
+
+def skill_text():
+    return SKILL.read_text(encoding="utf-8")
+
+
+def body_lines():
+    lines = skill_text().splitlines()
+    assert lines[0] == "---"
+    end = lines.index("---", 1)
+    return lines[end + 1:]
+
+
+def flat(text):
+    return " ".join(text.lower().split())
+
+
+def readme_dream_sections():
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    sections = re.split(r"(?m)^(?=#)", text)
+    return "".join(s for s in sections if s.startswith("#") and "dream" in s.splitlines()[0].lower())
+
+
+def portable_texts():
+    paths = [PLUGIN / "scripts" / "dream.py", SKILL,
+             PLUGIN / "templates" / "com.work.dream.plist", PLUGIN / "templates" / "dream.example.jsonc"]
+    paths += sorted(p for p in (REPO / "evals" / "dream").glob("**/*") if p.is_file())
+    texts = {str(p.relative_to(REPO)): p.read_text(encoding="utf-8", errors="replace") for p in paths}
+    texts["README.md (dream sections)"] = readme_dream_sections()
+    return texts
+
+
+def denylist_path():
+    return Path(os.path.expanduser(os.environ.get(DENYLIST_ENV) or DENYLIST_DEFAULT))
+
+
+def read_denylist(path):
+    """Lowercased tokens, one per line; blank lines and # comments are ignored."""
+    lines = (line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines())
+    return [line.lower() for line in lines if line]
+
+
+def denied_tokens(text, tokens):
+    lowered = text.lower()
+    return {token for token in tokens if token in lowered}
+
+
+def test_skill_is_under_500_lines_and_names_helper_line():
+    assert len(skill_text().splitlines()) < 500
+    first = next(line for line in body_lines() if line.strip() and not line.startswith("#"))
+    helper = compact_hook_command().rsplit(" ", 1)[0]
+    assert first.startswith("Helper: `%s`" % helper)
+
+
+def test_skill_frontmatter_names_the_nightly_run():
+    head = skill_text().split("---")[1]
+    assert re.search(r"(?m)^name: dream$", head)
+    description = re.search(r"(?m)^description: (.+)$", head).group(1).lower()
+    assert "nightly" in description and "dream-run" in description
+
+
+def test_skill_states_the_required_rules():
+    text = flat(skill_text())
+    required = [
+        "only the user's own words",
+        "tool output",
+        "pasted",
+        "never evidence",
+        "`sources:`",
+        "`_retired/`",
+        "`superseded_by:`",
+        "only when new evidence touches it",
+        "`repo:`",
+        "read-only",
+        "`unverified:",
+        "`checks.json`",
+        "contradiction",
+        "promotion",
+        "at most 5 promotions",
+        "nothing private",
+        "repo file",
+    ]
+    missing = [phrase for phrase in required if phrase not in text]
+    assert missing == []
+
+
+def test_skill_names_both_stage_modes():
+    text = skill_text()
+    assert "`extract`" in text and "`reorganize`" in text
+
+
+def test_dream_files_name_no_ticket_key():
+    found = {}
+    for name, text in portable_texts().items():
+        keys = set(TICKET_KEY.findall(text)) - ALLOWED_KEYS
+        if keys:
+            found[name] = sorted(keys)
+    assert found == {}
+
+
+def test_dream_files_name_no_org_or_person():
+    path = denylist_path()
+    if not path.is_file():
+        pytest.skip("no denylist at %s: create it (one organization or person token per line, # comments allowed) "
+                    "or point %s at one" % (path, DENYLIST_ENV))
+    tokens = read_denylist(path)
+    found = {name: sorted(hits) for name, text in portable_texts().items() for hits in [denied_tokens(text, tokens)]
+             if hits}
+    assert found == {}
+
+
+def test_denylist_reader_follows_the_env_path_and_ignores_comments(tmp_path, monkeypatch):
+    listing = tmp_path / "deny.txt"
+    listing.write_text("# a comment\n\nZqxToken  # trailing note\n  other\n", encoding="utf-8")
+    monkeypatch.setenv(DENYLIST_ENV, str(listing))
+    assert denylist_path() == listing
+    tokens = read_denylist(denylist_path())
+    assert tokens == ["zqxtoken", "other"]
+    assert denied_tokens("prefix-ZQXTOKEN-suffix, a comment", tokens) == {"zqxtoken"}
+
+
+def test_skill_has_no_unfilled_markers():
+    assert not re.search(r"\b(?:TBD|TODO)\b", skill_text())
