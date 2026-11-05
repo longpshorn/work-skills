@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
+import dream
+
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 ARCHIVED_STATUS = "deprecated"
 REQUIRED = ("title", "state", "next", "updated")
@@ -585,6 +587,7 @@ def build_parser():
     target.add_argument("--all", action="store_true")
     toucher = sub.add_parser("touch", help="stamp a workstream's updated date and OKF generated datetime")
     toucher.add_argument("key")
+    dream.add_parsers(sub)
     return parser, sub
 
 
@@ -596,6 +599,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.cmd == "nudge":
         return cmd_nudge()
+    if args.cmd.startswith("dream-"):
+        return dream.run_command(args)
     raw = os.environ.get("WORK_STORE")
     if raw and not os.path.isabs(os.path.expanduser(raw)):
         print(f"work.py: WORK_STORE must be an absolute path (or start with ~), not {raw!r}", file=sys.stderr)

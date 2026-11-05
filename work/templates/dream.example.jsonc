@@ -1,0 +1,38 @@
+// Copy to ~/.config/work/dream.json (full-line // comments are allowed).
+{
+  // Folder holding MEMORY.md; omit to use autoMemoryDirectory from ~/.claude/settings.json.
+  "memory_dir": "~/.claude/memory",
+  // The user-level instructions file that promotions may be added to.
+  "global_claude_md": "~/.claude/CLAUDE.md",
+  // Models for the extraction stage and for each verification check.
+  "models": {"extract": "sonnet", "check": "opus"},
+  // Limits: index size, instruction-file length, promotions per run, gates, and turn budgets.
+  "caps": {
+    "index_lines": 150,
+    "index_bytes": 18432,
+    "claude_md_lines": 200,
+    "promotions": 5,
+    "min_conversations": 3,
+    "idle_hours": 2,
+    "first_run_days": 14,
+    "turns_extract": 60,
+    "turns_check": 6
+  },
+  // Local time the scheduler starts a run.
+  "schedule": {"hour": 2, "minute": 0},
+  // Per-repo rules for proposing repo-instruction changes; placeholders: {ticket}, {date}, {summary}.
+  "repos": [
+    {
+      "match": "git.example.com/group/repo",
+      "branch": "docs/{ticket}-memory-{date}",
+      "commit": "docs: {ticket} {summary}",
+      "ticket": "KEY-1",
+      "reviewers": ["reviewer"],
+      "promote": false
+    }
+  ],
+  // Regexes that mark a conversation's first prompt as an agent run, to be excluded.
+  "agent_prompts": ["^You are an automated agent"],
+  // The claude executable to invoke.
+  "claude_bin": "claude"
+}
