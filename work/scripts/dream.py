@@ -99,7 +99,7 @@ def load_config():
 def add_parsers(sub):
     helps = {
         "dream-gather": "digest recent ended conversations and the current memory",
-        "dream-check": "verify one memory claim against the code",
+        "dream-check": "validate the memory folder",
         "dream-run": "run one consolidation pass",
         "dream-status": "show the last run and the next gate",
         "dream-install": "install the nightly schedule",
@@ -107,6 +107,7 @@ def add_parsers(sub):
     parsers = {name: sub.add_parser(name, help=helps[name]) for name in COMMANDS}
     parsers["dream-gather"].add_argument("--since", help="ISO time bounding a first run (default: now minus first_run_days)")
     parsers["dream-gather"].add_argument("--out", help="digest folder (default: <state>/digests)")
+    parsers["dream-check"].add_argument("--memory-dir", help="memory folder (default: the configured memory_dir)")
     return parsers
 
 
@@ -115,6 +116,8 @@ def run_command(args):
         return _gather_command(args)
     if args.cmd == "dream-status":
         return _status_command()
+    if args.cmd == "dream-check":
+        return _check_command(args)
     print(f"work.py: {args.cmd} is not implemented yet", file=sys.stderr)
     return 2
 
@@ -482,3 +485,121 @@ def _status_command():
     if line:
         print(line)
     return 0
+
+
+class FrontmatterError(ValueError):
+    pass
+
+
+def _scalar(raw):
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        return [item.strip().strip("\"'") for item in raw[1:-1].split(",") if item.strip()]
+    return raw.strip("\"'")
+
+
+def parse_memory(text):
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise FrontmatterError("missing frontmatter")
+    try:
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        raise FrontmatterError("unterminated frontmatter")
+    meta = {}
+    nested = None
+    for line in lines[1:end]:
+        if not line.strip():
+            continue
+        key, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        if line[0] in " \t" and nested is not None:
+            nested[key.strip()] = _scalar(value)
+        elif not value.strip():
+            nested = meta[key.strip()] = {}
+        else:
+            nested = None
+            meta[key.strip()] = _scalar(value)
+    return meta
+
+
+_INDEX_LINE = re.compile(r"^- \[(?P<title>.+?)\]\((?P<file>[^)]+\.md)\)")
+
+
+def _front(path, problems, label):
+    try:
+        return parse_memory(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        problems.append("%s: %s" % (label, exc))
+        return None
+
+
+def _check_live(meta, label, problems):
+    for field_name in ("name", "description"):
+        if not meta.get(field_name):
+            problems.append("%s: missing %s" % (label, field_name))
+    inner = meta.get("metadata")
+    if not (isinstance(inner, dict) and inner.get("type")):
+        problems.append("%s: missing metadata.type" % label)
+    if "promoted_to" in meta and not (isinstance(meta["promoted_to"], str) and meta["promoted_to"]):
+        problems.append("%s: promoted_to must be a non-empty string" % label)
+
+
+def check_memory(memory_dir, caps):
+    problems = []
+    live = sorted(p.name for p in memory_dir.glob("*.md") if p.name != "MEMORY.md")
+    for name in live:
+        meta = _front(memory_dir / name, problems, name)
+        if meta is not None:
+            _check_live(meta, name, problems)
+    retired = sorted((memory_dir / "_retired").glob("*.md"))
+    for path in retired:
+        label = "_retired/" + path.name
+        meta = _front(path, problems, label)
+        if meta is None:
+            continue
+        for field_name in ("superseded_by", "retired"):
+            if not meta.get(field_name):
+                problems.append("%s: missing %s" % (label, field_name))
+    try:
+        raw = (memory_dir / "MEMORY.md").read_bytes()
+    except OSError:
+        return problems + ["MEMORY.md: missing"]
+    index_lines = raw.decode("utf-8", "replace").splitlines()
+    if len(index_lines) > caps["index_lines"]:
+        problems.append("MEMORY.md: %d lines exceeds %d" % (len(index_lines), caps["index_lines"]))
+    if len(raw) > caps["index_bytes"]:
+        problems.append("MEMORY.md: %d bytes exceeds %d" % (len(raw), caps["index_bytes"]))
+    indexed = set()
+    for line in index_lines:
+        match = _INDEX_LINE.match(line)
+        if not match:
+            continue
+        target = match.group("file")
+        if target.startswith("_retired/"):
+            problems.append("MEMORY.md: retired file %s is still indexed" % target)
+        elif target not in live:
+            problems.append("MEMORY.md: index line points to missing file %s" % target)
+        else:
+            indexed.add(target)
+    for name in live:
+        if name not in indexed:
+            problems.append("%s: no index line in MEMORY.md" % name)
+    return problems
+
+
+def _check_command(args):
+    if args.memory_dir:
+        memory_dir, caps = Path(args.memory_dir), DEFAULTS["caps"]
+    else:
+        try:
+            cfg = load_config()
+        except ConfigError as exc:
+            print("work.py: %s" % exc, file=sys.stderr)
+            return 1
+        memory_dir, caps = cfg["memory_dir"], cfg["caps"]
+    problems = check_memory(memory_dir, caps)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
