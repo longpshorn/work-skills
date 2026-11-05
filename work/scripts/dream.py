@@ -540,7 +540,7 @@ def _check_live(meta, label, problems):
         if not meta.get(field_name):
             problems.append("%s: missing %s" % (label, field_name))
     inner = meta.get("metadata")
-    if not (isinstance(inner, dict) and inner.get("type")):
+    if not ((isinstance(inner, dict) and inner.get("type")) or meta.get("type")):
         problems.append("%s: missing metadata.type" % label)
     if "promoted_to" in meta and not (isinstance(meta["promoted_to"], str) and meta["promoted_to"]):
         problems.append("%s: promoted_to must be a non-empty string" % label)

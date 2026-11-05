@@ -124,3 +124,27 @@ def test_cli_exit_codes(tmp_path, dream_env, capsys):
     (good / "b.md").write_text(old("b"), encoding="utf-8")
     assert work.main(["dream-check", "--memory-dir", str(good)]) == 1
     assert "b.md" in capsys.readouterr().err
+
+
+def test_top_level_type_passes(tmp_path):
+    text = "---\nname: a\ndescription: d\ntype: feedback\n---\nBody\n"
+    assert dream.check_memory(memory(tmp_path, {"a.md": text}), CAPS) == []
+
+
+def test_metadata_type_passes(tmp_path):
+    assert dream.check_memory(memory(tmp_path, {"a.md": old("a")}), CAPS) == []
+
+
+def test_neither_type_reports_problem(tmp_path):
+    text = "---\nname: a\ndescription: d\n---\nBody\n"
+    problems = dream.check_memory(memory(tmp_path, {"a.md": text}), CAPS)
+    assert len(problems) == 1 and "metadata.type" in problems[0]
+
+
+def test_parse_memory_real_shaped_values():
+    meta = dream.parse_memory(
+        "---\nname: a\ndescription: Use X: it works # not a comment\n"
+        "title: \"quoted: value\"\nmetadata:\n  type: 'user'\n---\n")
+    assert meta["description"] == "Use X: it works # not a comment"
+    assert meta["title"] == "quoted: value"
+    assert meta["metadata"]["type"] == "user"
