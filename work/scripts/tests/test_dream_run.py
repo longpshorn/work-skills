@@ -400,23 +400,25 @@ def test_restore_failed_from_apply_still_resets_to_snapshot(world, monkeypatch):
 RULE = {"match": "acme/widgets", "branch": "docs/memory-{date}", "commit": "docs: {summary}", "promote": True}
 
 
-def forge_repo(world, monkeypatch, url="https://github.com/acme/widgets.git", origin_files=None):
+def forge_repo(world, monkeypatch, url="https://github.com/acme/widgets.git", origin_files=None, name="repo"):
     """A checkout whose origin is a local bare repo behind `url`, with a fake gh; returns (repo, bare)."""
-    bare = world.tmp / "origin.git"
+    bare = world.tmp / ("origin-%s.git" % name)
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-    seed_repo = init_repo(world.tmp / "seed", remote=str(bare))
+    seed_repo = init_repo(world.tmp / ("seed-%s" % name), remote=str(bare))
     for rel, text in (origin_files or {}).items():
         (seed_repo / rel).write_text(text, encoding="utf-8")
         git(seed_repo, "add", "-A")
         git(seed_repo, "commit", "-q", "-m", "files")
     git(seed_repo, "push", "-q", "origin", "main")
-    repo = world.tmp / "repo"
+    repo = world.tmp / name
     subprocess.run(["git", "clone", "-q", str(bare), str(repo)], check=True)
     git(repo, "remote", "set-url", "origin", url)
     git(repo, "config", "url.%s.insteadOf" % bare, url)
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
     forge_bin = world.tmp / "forge-bin"
+    if name != "repo":
+        return repo, bare
     forge_bin.mkdir()
     fake_bin(forge_bin, "gh", 'case "$2" in create) echo https://github.com/acme/widgets/pull/7;; '
                               'list) echo "[]";; esac\n')
@@ -533,3 +535,41 @@ def test_failure_after_a_global_write_puts_the_global_file_back(world, monkeypat
     assert run() == 1
     assert world.gmd.read_text(encoding="utf-8") == "# Mine\n"
     assert "promoted_to" not in meta(world, "p1")
+
+
+def test_landing_ref_is_origin_when_the_recorded_branch_is_behind_it(world, monkeypatch):
+    repo, bare = forge_repo(world, monkeypatch)
+    git(repo, "branch", "docs/memory-old", "main")
+    reviewer = world.tmp / "reviewer"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(bare), str(reviewer)], check=True)
+    git(reviewer, "config", "user.email", "r@example.com")
+    git(reviewer, "config", "user.name", "r")
+    (reviewer / "CLAUDE.md").write_text("# Repo\n- reviewer edit\n", encoding="utf-8")
+    git(reviewer, "add", "-A")
+    git(reviewer, "commit", "-q", "-m", "review")
+    git(reviewer, "push", "-q", "origin", "HEAD:refs/heads/docs/memory-old")
+    _record(repo, "docs/memory-old")
+    world.plan({"extract": {"checks": [promotion("p1", str(repo), "# Repo\n- run the linter\n")]}})
+    assert run() == 0
+    assert "check" not in calls(world)
+    assert "item p1 dropped: deferred" in log_lines(world)[-1]
+    assert git(bare, "show", "docs/memory-old:CLAUDE.md") == "# Repo\n- reviewer edit"
+    assert "promoted_to" not in meta(world, "p1")
+
+
+def test_open_mrs_recorded_before_a_later_repo_fails_are_saved(world, monkeypatch):
+    repo, _ = forge_repo(world, monkeypatch)
+    other, _ = forge_repo(world, monkeypatch, url="https://github.com/acme/widgets-two.git", name="other")
+    seed(world, ["p1", "p2"])
+
+    def fake_propose(repo_path, rule, ops, summary, today, state, cfg, notes=None):
+        if repo_path == other.resolve():
+            raise dream.RestoreFailed("rollback could not restore: CLAUDE.md")
+        state["open_mrs"][str(repo_path)] = {"branch": "b", "forge": "github", "number": 7, "url": "u"}
+        return "u"
+    monkeypatch.setattr(dream, "propose", fake_propose)
+    world.plan({"extract": {"checks": [promotion("p1", str(repo), "# Repo\n- a\n"),
+                                       promotion("p2", str(other), "# Repo\n- b\n")]}})
+    assert run() == 1
+    assert dream.load_state()["open_mrs"][str(repo.resolve())]["number"] == 7
+    assert "failed: " in log_lines(world)[-1]

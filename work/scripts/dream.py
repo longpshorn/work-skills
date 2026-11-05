@@ -1593,14 +1593,18 @@ def _promotion_root(target, cfg):
 
 
 def _landing_ref(repo, state):
-    """The ref a repo promotion's write lands on: the recorded branch tip, else origin's default branch."""
+    """The tip propose will commit on: the recorded branch (fast-forwarded to origin when behind it),
+    else origin's default branch."""
     _git(repo, ["fetch", "-q", "origin"])
     record = state["open_mrs"].get(str(repo))
     if record:
-        branch = record["branch"]
-        for ref in ("refs/heads/" + branch, "refs/remotes/origin/" + branch):
-            if _has_ref(repo, ref):
-                return ref
+        local, remote = "refs/heads/" + record["branch"], "refs/remotes/origin/" + record["branch"]
+        have_local, have_remote = _has_ref(repo, local), _has_ref(repo, remote)
+        if have_local and have_remote:
+            behind = _git(repo, ["merge-base", "--is-ancestor", local, remote], check=False).returncode == 0
+            return remote if behind else local
+        if have_local or have_remote:
+            return local if have_local else remote
     return "refs/remotes/origin/" + _default_branch(repo)
 
 
@@ -1728,20 +1732,23 @@ def _propose_all(promotions, cfg, today, state, notes):
     for vetted in promotions:
         by_repo.setdefault(vetted["root"], []).append(vetted)
     mrs, landed = [], []
-    for repo, group in by_repo.items():
-        ops = [op for vetted in group for op in vetted["target_ops"]]
-        summary = "; ".join(_one_line(v["item"].get("summary") or "memory promotion") for v in group)
-        before = _branch_tip(repo, state)
-        try:
-            url = propose(repo, group[0]["rule"], ops, summary, today, state, cfg, notes)
-        except (ValueError, ConfigError, OSError) as exc:
-            notes.append("promotion to %s not proposed: %s" % (repo, exc))
-            continue
-        after = _branch_tip(repo, state)
-        if after and after[1] and after != before:
-            landed.extend(group)
-        if url:
-            mrs.append(url)
+    try:
+        for repo, group in by_repo.items():
+            ops = [op for vetted in group for op in vetted["target_ops"]]
+            summary = "; ".join(_one_line(v["item"].get("summary") or "memory promotion") for v in group)
+            before = _branch_tip(repo, state)
+            try:
+                url = propose(repo, group[0]["rule"], ops, summary, today, state, cfg, notes)
+            except (ValueError, ConfigError, OSError) as exc:
+                notes.append("promotion to %s not proposed: %s" % (repo, exc))
+                continue
+            after = _branch_tip(repo, state)
+            if after and after[1] and after != before:
+                landed.extend(group)
+            if url:
+                mrs.append(url)
+    finally:
+        save_state(state)
     return mrs, landed
 
 
@@ -1798,7 +1805,6 @@ def _run_locked(cfg, now, force, skill, say):
         save_state(state)
         say("proposing repo promotions")
         mrs, landed = _propose_all([v for v in promotions if v["target"] != "global"], cfg, today, state, notes)
-        save_state(state)
         for vetted in landed:
             mark_promoted(memory_dir, vetted["item"]["memory"], vetted["promoted_to"])
             changes["promoted"].append(_memory_name(vetted["item"]["memory"].replace("\\", "/")))
