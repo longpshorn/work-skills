@@ -4,6 +4,7 @@
   ],
   "arms": [
     "skill",
+    "skill-sonnet",
     "baseline"
   ],
   "scenarios": [

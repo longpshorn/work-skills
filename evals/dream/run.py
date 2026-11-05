@@ -1,7 +1,7 @@
 """Runs the dream eval scenarios against real `claude` and grades them. Paid: needs --confirm-paid.
 
     python evals/dream/run.py --dry-run                      # print the plan, call nothing
-    python evals/dream/run.py --out <dir> --confirm-paid     # every scenario, both arms
+    python evals/dream/run.py --out <dir> --confirm-paid     # every scenario, every arm
 """
 
 import argparse
@@ -17,6 +17,11 @@ from typing import Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.insert(0, str(ROOT / "work" / "scripts"))
+
+import dream  # noqa: E402
+
+SHIPPED_EXTRACT = dream.DEFAULTS["models"]["extract"]
 WORK_TOOLS = ROOT / "work" / "scripts" / "work-tools"
 BASELINE_SKILL = HERE / "baseline-skill.md"
 SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIAL|PRIVATE_KEY", re.IGNORECASE)
@@ -49,7 +54,12 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
-def prepare(scenario: str, workdir: Path, model: str, claude: str) -> Path:
+def extract_model(arm: str, model: str) -> str:
+    """The extract stage's model: the shipped one for arm skill-sonnet, else the eval model."""
+    return SHIPPED_EXTRACT if arm == "skill-sonnet" else model
+
+
+def prepare(scenario: str, workdir: Path, model: str, claude: str, arm: str = "skill") -> Path:
     """Lay out one isolated run under workdir; returns the memory folder (its own git repo)."""
     source = HERE / "scenarios" / scenario
     memory = workdir / "memory"
@@ -75,7 +85,7 @@ def prepare(scenario: str, workdir: Path, model: str, claude: str) -> Path:
     (workdir / "config" / "dream.json").write_text(json.dumps({
         "memory_dir": str(memory), "global_claude_md": str(workdir / "CLAUDE.md"),
         "claude_bin": claude, "repos": [], "agent_prompts": [],
-        "models": {"extract": model, "check": model},
+        "models": {"extract": extract_model(arm, model), "check": model},
         "caps": {"budget_extract_usd": EXTRACT_CAP_USD, "budget_check_usd": CHECK_CAP_USD}}), encoding="utf-8")
     return memory
 
@@ -99,7 +109,7 @@ def run_arm(scenario: str, arm: str, workdir: Path, model: Optional[str] = None,
         raise RuntimeError("claude was not found on PATH")
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    memory = prepare(scenario, workdir, model or manifest()["models"][0], claude)
+    memory = prepare(scenario, workdir, model or manifest()["models"][0], claude, arm)
     done = subprocess.run(command(arm), cwd=str(workdir), env=clean_env(dict(os.environ), workdir),
                           capture_output=True, text=True)
     (workdir / "run.log").write_text("exit %d\n--- stdout\n%s\n--- stderr\n%s\n"
@@ -136,8 +146,9 @@ def run_dir_of(workdir: Path) -> Optional[Path]:
 
 
 def plan(scenarios: List[str], arms: List[str], models: List[str]) -> List[str]:
-    return ["scenario=%s arm=%s model=%s extract_cap=$%d check_cap=$%d per check" %
-            (s, a, m, EXTRACT_CAP_USD, CHECK_CAP_USD) for m in models for s in scenarios for a in arms]
+    return ["scenario=%s arm=%s model=%s extract=%s extract_cap=$%d check_cap=$%d per check" %
+            (s, a, m, extract_model(a, m), EXTRACT_CAP_USD, CHECK_CAP_USD)
+            for m in models for s in scenarios for a in arms]
 
 
 def main(argv: List[str]) -> int:
@@ -145,7 +156,7 @@ def main(argv: List[str]) -> int:
     ids = [s["id"] for s in fixtures["scenarios"]]
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scenario", action="append", choices=ids, help="repeatable (default: all)")
-    parser.add_argument("--arm", action="append", choices=fixtures["arms"], help="repeatable (default: both)")
+    parser.add_argument("--arm", action="append", choices=fixtures["arms"], help="repeatable (default: all)")
     parser.add_argument("--model", action="append", help="repeatable (default: the manifest's models)")
     parser.add_argument("--out", help="folder for run folders and results; outside the repo")
     parser.add_argument("--dry-run", action="store_true", help="print the planned runs; call no model")

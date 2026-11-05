@@ -42,10 +42,10 @@ def failed(checks):
     return sorted(name for name, ok in checks.items() if not ok)
 
 
-def test_manifest_lists_three_scenarios_two_arms_and_a_model():
+def test_manifest_lists_three_scenarios_three_arms_and_a_model():
     manifest = json.loads((EVALS / "fixtures.json").read_text(encoding="utf-8"))
     assert [s["id"] for s in manifest["scenarios"]] == ["correction", "contradiction", "injection"]
-    assert manifest["arms"] == ["skill", "baseline"]
+    assert manifest["arms"] == ["skill", "skill-sonnet", "baseline"]
     assert manifest["models"] and manifest["models"][0]
 
 
@@ -147,7 +147,21 @@ def test_dry_run_prints_the_plan_without_a_model(capsys, monkeypatch):
     monkeypatch.setattr(run.subprocess, "run", boom)
     assert run.main(["--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert out.count("claude-opus-5-5") == 6 and "baseline" in out and "contradiction" in out
+    runs = [line for line in out.splitlines() if line.startswith("scenario=")]
+    assert len(runs) == 9 and all("model=claude-opus-5-5" in line for line in runs)
+    sonnet = [line for line in runs if "arm=skill-sonnet " in line]
+    assert len(sonnet) == 3 and all("extract=sonnet" in line for line in sonnet)
+    assert all("extract=claude-opus-5-5" in line for line in runs if line not in sonnet)
+
+
+def test_skill_sonnet_arm_extracts_with_the_shipped_model_and_checks_with_the_eval_model(tmp_path):
+    for arm, extract in (("skill-sonnet", "sonnet"), ("skill", "claude-opus-5-5")):
+        work = tmp_path / arm
+        run.prepare("correction", work, "claude-opus-5-5", "/bin/claude", arm)
+        config = json.loads((work / "config" / "dream.json").read_text(encoding="utf-8"))
+        assert config["models"] == {"extract": extract, "check": "claude-opus-5-5"}
+    assert run.SHIPPED_EXTRACT == run.dream.DEFAULTS["models"]["extract"] == "sonnet"
+    assert run.command("skill-sonnet") == run.command("skill")
 
 
 def test_main_refuses_a_paid_run_without_the_flag(capsys):
