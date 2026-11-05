@@ -589,6 +589,155 @@ def check_memory(memory_dir, caps):
     return problems
 
 
+
+class UnsafePath(ValueError):
+    pass
+
+
+class TooLong(ValueError):
+    pass
+
+
+def safe_path(root, rel):
+    if not isinstance(rel, str) or not rel.strip():
+        raise UnsafePath("empty path")
+    flat = rel.replace("\\", "/")
+    if flat.startswith("/") or re.match(r"^[A-Za-z]:", flat) or Path(rel).is_absolute():
+        raise UnsafePath("absolute path: %s" % rel)
+    if ".." in flat.split("/"):
+        raise UnsafePath("path escapes its root: %s" % rel)
+    base = root.resolve()
+    full = (base / rel).resolve()
+    try:
+        full.relative_to(base)
+    except ValueError:
+        raise UnsafePath("path resolves outside its root: %s" % rel)
+    if full == base:
+        raise UnsafePath("path is the root itself: %s" % rel)
+    return full
+
+
+_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md")
+
+
+def _read(path):
+    return path.read_bytes().decode("utf-8")
+
+
+def _put(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def _single_line(value, what):
+    if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+        raise ValueError("%s must be one non-empty line" % what)
+
+
+def _stamp(text, fields):
+    lines = text.split("\n")
+    parse_memory(text)
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    keys = tuple(k + ":" for k in fields)
+    kept = [l for l in lines[1:end] if not l.startswith(keys)]
+    stamped = ["%s: %s" % (k, v) for k, v in fields.items()]
+    return "\n".join([lines[0]] + kept + stamped + lines[end:])
+
+
+def _validate_ops(ops, memory_dir, target_root, caps):
+    """Return the ops as (op, resolved path) pairs, or raise before anything is written."""
+    planned = []
+    written = set()
+    for op in ops:
+        if not isinstance(op, dict):
+            raise ValueError("op must be an object")
+        kind = op.get("op")
+        if kind == "write":
+            if op.get("root") not in ("memory", "target"):
+                raise ValueError("write op needs root memory or target")
+            if not isinstance(op.get("content"), str):
+                raise ValueError("write op needs string content")
+            base = memory_dir if op["root"] == "memory" else target_root
+            if base is None:
+                raise ValueError("write op names a target root but none is available")
+            full = safe_path(base, op.get("path"))
+            if op["root"] == "target" and full.name in _INSTRUCTION_FILES:
+                if len(op["content"].splitlines()) > caps["claude_md_lines"]:
+                    raise TooLong("%s would exceed %d lines" % (op["path"], caps["claude_md_lines"]))
+            if op["root"] == "memory":
+                written.add(full)
+            planned.append((op, full))
+        elif kind == "retire":
+            full = safe_path(memory_dir, op.get("path"))
+            if full.parent != memory_dir.resolve() or full.suffix != ".md" or full.name == "MEMORY.md":
+                raise ValueError("retire op needs a live memory file: %s" % op.get("path"))
+            if not full.is_file() and full not in written:
+                raise ValueError("retire op names a missing file: %s" % op.get("path"))
+            _single_line(op.get("superseded_by"), "superseded_by")
+            if safe_path(memory_dir, "_retired/" + full.name).exists():
+                raise ValueError("already retired: %s" % full.name)
+            planned.append((op, full))
+        elif kind == "index":
+            _single_line(op.get("section"), "section")
+            _single_line(op.get("line"), "line")
+            planned.append((op, safe_path(memory_dir, "MEMORY.md")))
+        else:
+            raise ValueError("unknown op: %r" % (kind,))
+    return planned
+
+
+def _insert_in_section(text, section, line):
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    heading = "## " + section.strip()
+    start = next((i for i, l in enumerate(lines) if l.strip() == heading), None)
+    if start is None:
+        return "\n".join(lines + ([""] if lines else []) + [heading, line]) + "\n"
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+    at = end
+    while at > start + 1 and not lines[at - 1].strip():
+        at -= 1
+    lines.insert(at, line)
+    return "\n".join(lines) + "\n"
+
+
+def _drop_index_line(text, name):
+    needle = "](%s)" % name
+    return "".join(l for l in text.splitlines(True) if needle not in l)
+
+
+def apply_ops(ops, memory_dir, target_root, today, caps):
+    planned = _validate_ops(ops, memory_dir, target_root, caps)
+    touched = []
+    index_path = memory_dir.resolve() / "MEMORY.md"
+    for op, full in planned:
+        if op["op"] == "write":
+            _put(full, op["content"])
+            touched.append(op["path"])
+        elif op["op"] == "retire":
+            stamped = _stamp(_read(full), {"superseded_by": op["superseded_by"], "retired": today.isoformat()})
+            _put(memory_dir.resolve() / "_retired" / full.name, stamped)
+            full.unlink()
+            if index_path.is_file():
+                _put(index_path, _drop_index_line(_read(index_path), full.name))
+            touched.append(op["path"])
+        else:
+            current = _read(index_path) if index_path.is_file() else ""
+            _put(index_path, _insert_in_section(current, op["section"], op["line"]))
+            touched.append("MEMORY.md")
+    return touched
+
+
+def mark_promoted(memory_dir, memory_rel, promoted_to):
+    path = safe_path(memory_dir, memory_rel)
+    text = _read(path)
+    if "promoted_to" in parse_memory(text):
+        return
+    _single_line(promoted_to, "promoted_to")
+    _put(path, _stamp(text, {"promoted_to": promoted_to}))
+
+
 def _check_command(args):
     if args.memory_dir:
         memory_dir, caps = Path(args.memory_dir), DEFAULTS["caps"]
