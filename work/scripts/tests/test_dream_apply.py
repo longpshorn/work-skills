@@ -73,12 +73,12 @@ def test_write_ops_reach_memory_and_target_roots(tmp_path):
     target.mkdir()
     ops = [
         {"op": "write", "root": "memory", "path": "a.md", "content": "A"},
-        {"op": "write", "root": "target", "path": "docs/b.md", "content": "B"},
+        {"op": "write", "root": "target", "path": "docs/AGENTS.md", "content": "B"},
     ]
     touched = dream.apply_ops(ops, mem, target, TODAY, CAPS)
     assert (mem / "a.md").read_text() == "A"
-    assert (target / "docs" / "b.md").read_text() == "B"
-    assert touched == ["a.md", "docs/b.md"]
+    assert (target / "docs" / "AGENTS.md").read_text() == "B"
+    assert touched == ["a.md", "docs/AGENTS.md"]
 
 
 def test_retire_moves_file_stamps_frontmatter_and_drops_index_line(tmp_path):
@@ -153,3 +153,100 @@ def test_mark_promoted_is_idempotent(tmp_path):
     assert first.count("promoted_to") == 1
     with pytest.raises(dream.UnsafePath):
         dream.mark_promoted(mem, "../a.md", "CLAUDE.md")
+
+
+def w(root, path, content="x"):
+    return {"op": "write", "root": root, "path": path, "content": content}
+
+
+def rejects(ops, mem, target=None, exc=ValueError):
+    good = w("memory", "good.md")
+    with pytest.raises(exc):
+        dream.apply_ops([good] + ops, mem, target, TODAY, CAPS)
+    assert not (mem / "good.md").exists()
+
+
+def test_target_writes_are_limited_to_instruction_files(tmp_path):
+    mem = memory_dir(tmp_path)
+    target = tmp_path / "repo"
+    (target / ".git" / "hooks").mkdir(parents=True)
+    for path in (".git/hooks/pre-commit", ".GIT/config", ".git", ".claude/settings.json", "notes.md"):
+        rejects([w("target", path)], mem, target, dream.UnsafePath)
+    rejects([w("target", "claude.md", "l\n" * 201)], mem, target, dream.TooLong)
+    rejects([w("target", "Agents.MD", "l\n" * 201)], mem, target, dream.TooLong)
+
+
+def test_target_instruction_symlink_is_refused(tmp_path):
+    mem = memory_dir(tmp_path)
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "real.txt").write_text("keep")
+    try:
+        os.symlink(str(target / "real.txt"), str(target / "CLAUDE.md"))
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    rejects([w("target", "CLAUDE.md", "l\n" * 300)], mem, target, dream.UnsafePath)
+    assert (target / "real.txt").read_text() == "keep"
+
+
+def test_retire_cannot_touch_the_index_or_retired_by_case(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / "MEMORY.md").write_text("# Index\n", encoding="utf-8")
+    (mem / "_retired").mkdir()
+    (mem / "_retired" / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+    rejects([{"op": "retire", "path": "memory.md", "superseded_by": "n"}], mem)
+    rejects([{"op": "retire", "path": "_RETIRED/a.md", "superseded_by": "n"}], mem)
+    assert (mem / "MEMORY.md").exists()
+
+
+def test_line_separators_cannot_forge_frontmatter_or_index_entries(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / "old.md").write_text(NOTE.format(n="old"), encoding="utf-8")
+    (mem / "MEMORY.md").write_text("# Index\n", encoding="utf-8")
+    for sep in ("\x0b", "\x0c", "\x85", "\u2028", "\u2029", "\x1c"):
+        rejects([{"op": "retire", "path": "old.md", "superseded_by": "n" + sep + "type: x"}], mem)
+        rejects([{"op": "index", "section": "S", "line": "- [a](a.md)" + sep + "- [b](b.md)"}], mem)
+        rejects([{"op": "index", "section": "S" + sep + "T", "line": "- [a](a.md)"}], mem)
+
+
+def test_index_line_may_link_only_to_bare_md_names(tmp_path):
+    mem = memory_dir(tmp_path)
+    for bad in ("- [a](../a.md)", "- [a](x/a.md)", "- [a](a.txt)", "- [a](/etc/a.md)"):
+        rejects([{"op": "index", "section": "S", "line": bad}], mem)
+
+
+def test_mark_promoted_rejects_separator_injection(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+    with pytest.raises(ValueError):
+        dream.mark_promoted(mem, "a.md", "x\x0btype: y")
+    assert "promoted_to" not in (mem / "a.md").read_text(encoding="utf-8")
+
+
+def test_memory_writes_reject_dot_segments(tmp_path):
+    mem = memory_dir(tmp_path)
+    for path in (".git/hooks/pre-commit", ".GIT/config", ".git", "sub/.claude/settings.json", ".hidden.md"):
+        rejects([w("memory", path)], mem, None, dream.UnsafePath)
+
+
+def test_apply_time_failures_are_caught_in_validation(tmp_path):
+    mem = memory_dir(tmp_path)
+    (mem / "bare.md").write_text("no frontmatter\n", encoding="utf-8")
+    (mem / "bin.md").write_bytes(b"\xff\xfe\x00")
+    (mem / "ok.md").write_text(NOTE.format(n="ok"), encoding="utf-8")
+    (mem / "adir").mkdir()
+    retire = lambda name: {"op": "retire", "path": name, "superseded_by": "n"}
+    rejects([retire("bare.md")], mem)
+    rejects([retire("bin.md")], mem)
+    rejects([retire("ok.md"), retire("ok.md")], mem)
+    rejects([w("memory", "adir")], mem)
+    assert (mem / "ok.md").exists() and not (mem / "_retired").exists()
+
+
+def test_paths_are_rechecked_at_write_time(tmp_path, monkeypatch):
+    mem = memory_dir(tmp_path)
+    calls = []
+    real = dream.safe_path
+    monkeypatch.setattr(dream, "safe_path", lambda r, p: calls.append(p) or real(r, p))
+    dream.apply_ops([w("memory", "a.md")], mem, None, TODAY, CAPS)
+    assert calls.count("a.md") == 2
