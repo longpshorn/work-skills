@@ -104,7 +104,13 @@ def load_config(home=None):
     cfg = copy.deepcopy(DEFAULTS)
     path = config_path(home)
     if path.is_file():
-        _merge(cfg, _read_json(path, "config"))
+        data = _read_json(path, "config")
+        if not isinstance(data, dict):
+            raise ConfigError("config %s must be an object" % path)
+        for key in ("caps", "models", "schedule"):
+            if key in data and not isinstance(data[key], dict):
+                raise ConfigError("config %s: %s must be an object" % (path, key))
+        _merge(cfg, data)
     memory_dir = cfg.get("memory_dir") or _settings_memory_dir(home)
     if not memory_dir:
         raise ConfigError(

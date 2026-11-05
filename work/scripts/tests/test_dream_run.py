@@ -717,3 +717,14 @@ def test_backfill_skips_files_without_frontmatter(tmp_path):
     dream.backfill_frontmatter(tmp_path)
     assert (tmp_path / "bad.md").read_text(encoding="utf-8") == "no frontmatter\n"
     assert (tmp_path / "MEMORY.md").read_text(encoding="utf-8") == "## x\n"
+
+
+@pytest.mark.parametrize("shape", [[], "x", {"caps": 3}, {"models": []}, {"schedule": "02:00"}])
+def test_a_config_of_the_wrong_shape_logs_one_failed_line(world, shape):
+    data = dict(world.cfg, **shape) if isinstance(shape, dict) else shape
+    world.env.config.write_text(json.dumps(data), encoding="utf-8")
+    talk(world, 3)
+    assert run() == 1
+    lines = log_lines(world)
+    assert len(lines) == 1 and "| failed: " in lines[0] and "must be an object" in lines[0]
+    assert calls(world) == []
