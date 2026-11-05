@@ -5,6 +5,7 @@ import datetime as dt
 import getpass
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -751,20 +752,24 @@ def _retire_path(op, memory_dir):
 
 
 class _Overlay:
-    """Final file contents planned in memory, keyed by casefolded path; None marks a delete."""
+    """Final file contents planned in memory, keyed by casefolded path; None marks a delete.
+
+    Each claim also records the path as the op spelled it, since resolved paths compare case-insensitively
+    on some systems and can take the existing file's case."""
 
     def __init__(self):
         self.planned = {}
+        self.spelled = {}
 
     @staticmethod
     def _key(path):
         return str(path).casefold()
 
-    def _claim(self, path):
-        entry = self.planned.get(self._key(path))
-        if entry is not None and entry[0] != path:
-            raise UnsafePath("one batch names %s and %s" % (entry[0].name, path.name))
-        return entry
+    def _claim(self, path, spelling):
+        spelling = posixpath.normpath(spelling.replace("\\", "/"))
+        first = self.spelled.setdefault(self._key(path), spelling)
+        if first != spelling:
+            raise UnsafePath("one batch names %s and %s" % (first, spelling))
 
     def is_file(self, path):
         entry = self.planned.get(self._key(path))
@@ -788,8 +793,8 @@ class _Overlay:
         except OSError as exc:
             raise ValueError("cannot read %s: %s" % (path.name, exc))
 
-    def put(self, path, text, base):
-        self._claim(path)
+    def put(self, path, text, base, spelling):
+        self._claim(path, spelling)
         if self.is_dir(path):
             raise ValueError("write op names a directory: %s" % path.name)
         for parent in path.parents:
@@ -804,8 +809,8 @@ class _Overlay:
             raise ValueError("content for %s is not encodable: %s" % (path.name, exc))
         self.planned[self._key(path)] = (path, data, base)
 
-    def delete(self, path, base):
-        self._claim(path)
+    def delete(self, path, base, spelling):
+        self._claim(path, spelling)
         if path.is_file():
             self.planned[self._key(path)] = (path, None, base)
         else:
@@ -825,7 +830,7 @@ def _plan(ops, memory_dir, target_root, today, caps):
         kind = op.get("op")
         if kind == "write":
             full = _write_path(op, memory_dir, target_root, caps)
-            over.put(full, op["content"], root if op["root"] == "memory" else target_root.resolve())
+            over.put(full, op["content"], root if op["root"] == "memory" else target_root.resolve(), op["path"])
             touched.append(op["path"])
         elif kind == "retire":
             full = _retire_path(op, memory_dir)
@@ -839,18 +844,18 @@ def _plan(ops, memory_dir, target_root, today, caps):
             fields = {"superseded_by": op["superseded_by"], "retired": today.isoformat()}
             stamped = _stamp(text, fields)
             retired.add(full.name.casefold())
-            over.delete(full, root)
-            over.put(dest, stamped, root)
+            over.delete(full, root, op["path"])
+            over.put(dest, stamped, root, RETIRED_DIR + "/" + posixpath.basename(op["path"].replace("\\", "/")))
             if over.is_file(index):
                 current = _decode(over.read(index), "MEMORY.md")
-                over.put(index, _drop_index_line(current, full.name), root)
+                over.put(index, _drop_index_line(current, full.name), root, "MEMORY.md")
             touched.append(op["path"])
         elif kind == "index":
             _single_line(op.get("section"), "section")
             _single_line(op.get("line"), "line")
             _check_index_line(op["line"])
             current = _decode(over.read(index), "MEMORY.md") if over.is_file(index) else ""
-            over.put(index, _insert_in_section(current, op["section"], op["line"]), root)
+            over.put(index, _insert_in_section(current, op["section"], op["line"]), root, "MEMORY.md")
             touched.append("MEMORY.md")
         else:
             raise ValueError("unknown op: %r" % (kind,))

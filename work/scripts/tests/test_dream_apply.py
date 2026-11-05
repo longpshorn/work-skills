@@ -465,3 +465,32 @@ def test_failed_original_restore_keeps_every_written_copy(tmp_path, monkeypatch)
     assert isinstance(info.value.__cause__, OSError)
     copies = [p for p in mem.rglob("a.md") if b"name: a" in p.read_bytes()]
     assert copies
+
+
+def test_case_variant_spellings_are_refused_where_paths_resolve_to_the_existing_case(tmp_path, monkeypatch):
+    real = dream.safe_path
+
+    def canonical(root, rel):
+        full = real(root, rel)
+        if full.parent.is_dir():
+            same = [p for p in full.parent.iterdir() if p.name.casefold() == full.name.casefold()]
+            if same:
+                return same[0]
+        return full
+
+    monkeypatch.setattr(dream, "safe_path", canonical)
+
+    def note(m):
+        (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+
+    untouched([retire("a.md"), w("memory", "A.md", NOTE.format(n="new"))], memory_dir(tmp_path / "1"), note)
+    untouched([w("memory", "A.md", NOTE.format(n="new")), retire("a.md")], memory_dir(tmp_path / "2"), note)
+    untouched([w("memory", "a.md", NOTE.format(n="x")), w("memory", "A.md", NOTE.format(n="y"))],
+              memory_dir(tmp_path / "3"), note)
+
+
+def test_one_spelling_written_twice_is_allowed(tmp_path):
+    mem = memory_dir(tmp_path)
+    dream.apply_ops([w("memory", "b.md", NOTE.format(n="x")), w("memory", "b.md", NOTE.format(n="b"))],
+                    mem, None, TODAY, CAPS)
+    assert (mem / "b.md").read_text(encoding="utf-8") == NOTE.format(n="b")
