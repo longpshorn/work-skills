@@ -698,58 +698,65 @@ def _retire_path(op, memory_dir):
 
 
 class _Overlay:
-    """Final file contents planned in memory; None marks a deleted file."""
+    """Final file contents planned in memory, keyed by casefolded path; None marks a delete."""
 
     def __init__(self):
         self.planned = {}
-        self.bases = {}
 
-    def _find(self, path):
-        fold = str(path).casefold()
-        return next((k for k in self.planned if str(k).casefold() == fold), None)
+    @staticmethod
+    def _key(path):
+        return str(path).casefold()
+
+    def _claim(self, path):
+        entry = self.planned.get(self._key(path))
+        if entry is not None and entry[0] != path:
+            raise UnsafePath("one batch names %s and %s" % (entry[0].name, path.name))
+        return entry
 
     def is_file(self, path):
-        key = self._find(path)
-        if key is not None:
-            return self.planned[key] is not None
+        entry = self.planned.get(self._key(path))
+        if entry is not None:
+            return entry[1] is not None
         return path.is_file()
 
     def is_dir(self, path):
-        fold = str(path).casefold()
-        for key, data in self.planned.items():
-            if data is not None and any(str(d).casefold() == fold for d in key.parents):
+        fold = self._key(path)
+        for entry in self.planned.values():
+            if any(self._key(d) == fold for d in entry[0].parents):
                 return True
-        return self._find(path) is None and path.is_dir()
+        return fold not in self.planned and path.is_dir()
 
     def read(self, path):
-        if path in self.planned:
-            return self.planned[path]
+        entry = self.planned.get(self._key(path))
+        if entry is not None:
+            return entry[1]
         try:
             return path.read_bytes()
         except OSError as exc:
             raise ValueError("cannot read %s: %s" % (path.name, exc))
 
     def put(self, path, text, base):
+        self._claim(path)
         if self.is_dir(path):
             raise ValueError("write op names a directory: %s" % path.name)
         for parent in path.parents:
             if parent == base:
                 break
-            if self.is_file(parent):
+            entry = self.planned.get(self._key(parent))
+            if self.is_file(parent) or (entry is not None and entry[1] is None):
                 raise ValueError("a file is in the way of %s" % path.name)
         try:
-            self.planned[path] = text.encode("utf-8")
+            data = text.encode("utf-8")
         except UnicodeEncodeError as exc:
             raise ValueError("content for %s is not encodable: %s" % (path.name, exc))
-        self.bases[path] = base
+        self.planned[self._key(path)] = (path, data, base)
 
     def delete(self, path, base):
+        self._claim(path)
         if path.is_file():
-            self.planned[path] = None
-            self.bases[path] = base
+            self.planned[self._key(path)] = (path, None, base)
         else:
-            self.planned.pop(path, None)
-            self.bases.pop(path, None)
+            self.planned.pop(self._key(path), None)
 
 
 def _plan(ops, memory_dir, target_root, today, caps):
@@ -813,13 +820,22 @@ def _undo(path, data):
         path.write_bytes(data)
 
 
-def _restore(prior, made_dirs):
+def _undo_all(steps):
     failed = []
-    for path, data in reversed(prior):
+    for path, data in reversed(steps):
         try:
             _undo(path, data)
         except OSError:
             failed.append(path)
+    return failed
+
+
+def _restore(written, deleted, made_dirs):
+    """Restore deleted originals first; undo writes only if every original is back."""
+    failed = _undo_all(deleted)
+    if failed:
+        return failed
+    failed = _undo_all(written)
     for path in reversed(made_dirs):
         try:
             path.rmdir()
@@ -829,26 +845,25 @@ def _restore(prior, made_dirs):
 
 
 def _commit(over):
-    prior = []
+    written = []
+    deleted = []
     made_dirs = []
-    deletes = [p for p, data in over.planned.items() if data is None]
-    writes = [(p, data) for p, data in over.planned.items() if data is not None]
+    entries = list(over.planned.values())
     try:
-        for path, data in writes:
-            base = over.bases[path]
+        for path, data, base in (e for e in entries if e[1] is not None):
             rel = str(path.relative_to(base))
             if safe_path(base, rel) != path:
                 raise UnsafePath("path changed before write: %s" % rel)
-            prior.append((path, path.read_bytes() if path.is_file() else None))
+            written.append((path, path.read_bytes() if path.is_file() else None))
             missing = [d for d in path.parents if not d.exists() and base in d.parents]
             path.parent.mkdir(parents=True, exist_ok=True)
             made_dirs.extend(reversed(missing))
             _put(path, data)
-        for path in deletes:
-            prior.append((path, path.read_bytes()))
+        for path, _, _ in (e for e in entries if e[1] is None):
+            deleted.append((path, path.read_bytes()))
             path.unlink()
     except BaseException as exc:
-        failed = _restore(prior, made_dirs)
+        failed = _restore(written, deleted, made_dirs)
         if failed:
             raise RestoreFailed(
                 "rollback could not restore: " + ", ".join(str(p) for p in failed)

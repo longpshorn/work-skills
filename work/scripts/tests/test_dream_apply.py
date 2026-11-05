@@ -423,3 +423,45 @@ def test_retiring_a_note_written_in_the_same_batch_leaves_only_the_retired_copy(
 
 def test_file_directory_conflicts_compare_case_insensitively(tmp_path):
     untouched([w("memory", "D"), w("memory", "d/x.md")], memory_dir(tmp_path))
+
+
+def test_case_variant_spellings_of_one_path_are_refused(tmp_path):
+    def note(m):
+        (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+
+    untouched([retire("a.md"), w("memory", "A.md", NOTE.format(n="new"))], memory_dir(tmp_path / "1"), note)
+    untouched([w("memory", "A.md", NOTE.format(n="new")), retire("a.md")], memory_dir(tmp_path / "2"), note)
+
+
+def test_a_retired_path_cannot_become_a_directory(tmp_path):
+    def note(m):
+        (m / "a.md").write_text(NOTE.format(n="a"), encoding="utf-8")
+
+    untouched([retire("a.md"), w("memory", "a.md/x.md")], memory_dir(tmp_path / "1"), note)
+    untouched([retire("a.md"), w("memory", "A.md/x.md")], memory_dir(tmp_path / "2"), note)
+
+
+def test_failed_original_restore_keeps_every_written_copy(tmp_path, monkeypatch):
+    mem = memory_dir(tmp_path)
+    for n in ("a", "b"):
+        (mem / (n + ".md")).write_text(NOTE.format(n=n), encoding="utf-8")
+    real_unlink, real_undo = Path.unlink, dream._undo
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == "b.md" and self.parent.name != "_retired":
+            raise OSError("unlink failed")
+        real_unlink(self, *args, **kwargs)
+
+    def flaky_undo(path, data):
+        if path.name == "a.md" and path.parent.name != "_retired":
+            raise OSError("cannot restore")
+        real_undo(path, data)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    monkeypatch.setattr(dream, "_undo", flaky_undo)
+    with pytest.raises(dream.RestoreFailed) as info:
+        dream.apply_ops([retire("a.md"), retire("b.md")], mem, None, TODAY, CAPS)
+    assert "a.md" in str(info.value)
+    assert isinstance(info.value.__cause__, OSError)
+    copies = [p for p in mem.rglob("a.md") if b"name: a" in p.read_bytes()]
+    assert copies
