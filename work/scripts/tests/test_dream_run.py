@@ -52,6 +52,9 @@ else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as handle:
             handle.write(text)
+    if "ops" in step:
+        with open(os.path.join(run_dir, "ops.json"), "w") as handle:
+            json.dump(step["ops"], handle)
     if "checks" in step:
         with open(os.path.join(run_dir, "checks.json"), "w") as handle:
             json.dump(step["checks"], handle)
@@ -592,3 +595,60 @@ def test_extract_stage_is_confined_to_the_memory_and_run_folders_and_runs_no_com
     assert "Bash" not in extract[extract.index("--tools") + 1].split(",")
     check = next(a for a in argvs if a[0] == "check")
     assert "--permission-mode" not in check and check[check.index("--tools") + 1] == ""
+
+
+def test_a_merge_retires_the_absorbed_file_through_ops_json(world):
+    seed(world, ["twin"])
+    talk(world, 3)
+    world.plan({"extract": {
+        "files": {"merged.md": memfile("merged"), "MEMORY.md": index("old", "twin", "merged")},
+        "ops": [{"op": "retire", "path": "twin.md", "superseded_by": "merged"}]}})
+    assert run() == 0
+    assert not (world.mem / "twin.md").exists()
+    retired = dream.parse_memory((world.mem / "_retired" / "twin.md").read_text(encoding="utf-8"))
+    assert retired["superseded_by"] == "merged" and retired["retired"] == dt.date.today().isoformat()
+    assert "(twin.md)" not in (world.mem / "MEMORY.md").read_text(encoding="utf-8")
+    assert dream.check_memory(world.mem, dream.DEFAULTS["caps"]) == []
+    assert calls(world).count("check") == 0
+    assert log_lines(world)[-1].endswith("| ok")
+
+
+def test_ops_json_with_a_write_op_fails_and_resets(world):
+    talk(world, 3)
+    before = git(world.mem, "rev-parse", "HEAD")
+    world.plan({"extract": {"files": {"new.md": memfile("new"), "MEMORY.md": index("old", "new")},
+                            "ops": [{"op": "write", "root": "memory", "path": "x.md", "content": "x"}]}})
+    assert run() == 1
+    assert git(world.mem, "rev-parse", "HEAD") == before and not (world.mem / "new.md").exists()
+    assert not (world.mem / "x.md").exists()
+    assert "ops.json" in log_lines(world)[-1] and "| failed" in log_lines(world)[-1]
+    assert dream.load_state()["transcripts"] == {}
+
+
+def test_ops_json_with_a_target_root_op_fails(world):
+    talk(world, 3)
+    world.plan({"extract": {"ops": [{"op": "retire", "root": "target", "path": "old.md", "superseded_by": "none"}]}})
+    assert run() == 1
+    assert (world.mem / "old.md").is_file()
+
+
+def test_ops_json_that_is_not_a_list_fails(world):
+    talk(world, 3)
+    world.plan({"extract": {"ops": {"op": "retire"}}})
+    assert run() == 1
+
+
+def test_ops_json_is_applied_in_reorganize_mode_and_not_reapplied(world):
+    seed(world, ["twin"])
+    state = dream.load_state()
+    state["reorganized"] = False
+    dream.save_state(state)
+    talk(world, 3)
+    world.plan({"reorganize": {"ops": [{"op": "retire", "path": "twin.md", "superseded_by": "none"}],
+                               "files": {"MEMORY.md": index("old")}},
+                "extract": {}})
+    assert run() == 0
+    assert (world.mem / "_retired" / "twin.md").is_file() and not (world.mem / "twin.md").exists()
+    assert subjects(world)[2] == "dream: first-run reorganization"
+    assert "_retired/twin.md" in git(world.mem, "show", "--name-only", "--format=", "HEAD")
+    assert log_lines(world)[-1].endswith("| ok")

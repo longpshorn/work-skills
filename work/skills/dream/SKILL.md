@@ -64,7 +64,7 @@ sources: [<session>:<uuid>, <session>:<uuid>]
 
 `type` is one of `user`, `feedback`, `project` or `reference`. Keep every existing field. Lists are written on one line. `seen:` holds the dates of the conversations that supported the fact (from the digest's `span:`), and `sources:` the `session:uuid` pairs of their quotes. The body states the fact first, then why it matters and how to apply it, in a few lines, and keeps the one quote that best supports it. Every new or changed memory carries its quote's pair in `sources:`. Write dates as absolute dates, never "yesterday" or "last week". Link a related memory with `[[file-name]]` when the link would help a reader find it.
 
-For a merge, and in `reorganize` mode, retire a memory by hand: move it into `_retired/` under the same file name, add `superseded_by:` (the surviving memory's file name without `.md`, or `none`) and `retired:` (today's date) to its frontmatter, and remove its `MEMORY.md` line. Never delete a memory file.
+For a merge, and in `reorganize` mode, retire a memory with a `retire` op in `ops.json`, a JSON list in the run folder: `{"op": "retire", "path": "file-name.md", "superseded_by": "<surviving memory's file name without .md, or none>"}`. `dream-run` moves the file into `_retired/`, stamps `superseded_by:` and `retired:` (today's date) and drops its `MEMORY.md` line after you finish. `ops.json` holds only `retire` and `index` ops, no `write`; write the surviving memory and any index change yourself with Write or Edit. You cannot move or delete files. Never delete a memory file.
 
 Apply adds, updates and merges directly. A change that contradicts or reverses an existing memory does not apply directly: it goes to `checks.json` (below).
 
@@ -128,7 +128,7 @@ The one-time first run, before any extraction; there are no digests. Make the fo
 - merge clear duplicates, the survivor keeping every fact and every `seen:` and `sources:` entry of the files it absorbs
 - retire memories that a newer memory or the current code contradicts, with `superseded_by:`. Check code read-only against the path the memory names, with Read, Grep and Glob. When that path is missing or is not a checkout, or a contradiction rests on code alone and is uncertain, mark the memory `unverified: <today>` instead of retiring it.
 
-Apply these directly; this mode writes no `checks.json`, extracts nothing and promotes nothing.
+Apply these directly (retirements through `ops.json`); this mode writes no `checks.json`, extracts nothing and promotes nothing.
 
 ## Finish
 

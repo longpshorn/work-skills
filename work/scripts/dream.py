@@ -1564,6 +1564,31 @@ def _stage(cfg, mode, skill, run_dir, digests, env):
                      timeout=caps["timeout_extract"])
     if not got["ok"]:
         raise StageFailed(got["error"])
+    _apply_direct_ops(cfg, mode, run_dir)
+
+
+DIRECT_OPS = ("retire", "index")
+
+
+def _apply_direct_ops(cfg, mode, run_dir):
+    """Apply the stage's merge and reorganize retirements from ops.json; only retire and index ops are allowed."""
+    path = Path(run_dir) / "ops.json"
+    if not path.exists():
+        return
+    try:
+        ops = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise StageFailed("unreadable ops.json: %s" % exc)
+    if not isinstance(ops, list):
+        raise StageFailed("ops.json is not a list")
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") not in DIRECT_OPS or "root" in op:
+            raise StageFailed("ops.json may hold only retire and index ops on the memory folder: %r" % (op,))
+    try:
+        apply_ops(ops, cfg["memory_dir"], None, dt.date.today(), cfg["caps"])
+    except ValueError as exc:
+        raise StageFailed("ops.json not applied: %s" % exc)
+    os.replace(str(path), str(Path(run_dir) / ("ops-applied-%s.json" % mode)))
 
 
 def _require_check(cfg):
