@@ -78,7 +78,7 @@ To uninstall, run `launchctl bootout gui/$(id -u)/com.work.dream`, then delete `
 | - | - |
 | `memory_dir`, `global_claude_md` | The memory folder, and the user-level instructions file promotions may edit. |
 | `models` | `extract` (default `sonnet`) and `check` (`opus`). |
-| `caps` | Index size, instruction-file length, promotions per run, `min_conversations` and `idle_hours` gates, `first_run_days` lookback, and per-stage turn, timeout and dollar limits. |
+| `caps` | Index size, instruction-file length, promotions per run, `min_conversations` and `idle_hours` gates, `first_run_days` lookback, `max_digests` (the oldest conversations read per run; the rest wait for the next night), and per-stage turn, timeout and dollar limits. |
 | `schedule` | Local `hour` and `minute` (default 02:00). |
 | `repos` | Per-repo rules: `match` (a substring of the origin URL), `branch`, `commit`, `ticket`, `reviewers` and `promote`. A repo without `"promote": true` is never touched. |
 | `agent_prompts` | Regexes marking a conversation as an agent run, which is skipped. |

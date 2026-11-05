@@ -33,6 +33,7 @@ DEFAULTS = {
         "timeout_check": 300,
         "budget_extract_usd": 5,
         "budget_check_usd": 1,
+        "max_digests": 40,
     },
     "schedule": {"hour": 2, "minute": 0},
     "repos": [],
@@ -336,15 +337,21 @@ def _is_own_run(turns):
 
 
 def gather(highwater, since, now, out_dir, cfg):
-    """Digest every ended conversation with new turns; returns one record per digest written."""
+    """Digest ended conversations with new turns, oldest first and at most caps.max_digests of them;
+    returns one record per digest written. The rest wait for a later run."""
     idle = cfg["caps"]["idle_hours"] * 3600
+    limit = cfg["caps"].get("max_digests", DEFAULTS["caps"]["max_digests"])
     patterns = cfg.get("agent_prompts") or []
     results = []
-    for path in sorted(projects_dir().glob("*/*.jsonl")):
+    candidates = []
+    for path in projects_dir().glob("*/*.jsonl"):
         try:
-            mtime = path.stat().st_mtime
+            candidates.append((path.stat().st_mtime, str(path), path))
         except OSError:
             continue
+    for mtime, _, path in sorted(candidates):
+        if len(results) >= limit:
+            break
         mark = highwater.get(str(path))
         if now.timestamp() - mtime < idle or mtime <= (mark["mtime"] if mark else since.timestamp()):
             continue
@@ -1466,6 +1473,8 @@ def run_claude(cmd, prompt, env, log_path, cwd, timeout=None):
         error = "claude produced no result event"
     elif final.get("is_error"):
         error = text or "claude reported an error"
+    elif final.get("subtype") != "success":
+        error = "claude ended with %s" % (final.get("subtype") or "no subtype")
     else:
         return {"ok": True, "result": text, "error": None}
     return {"ok": False, "result": text, "error": error}

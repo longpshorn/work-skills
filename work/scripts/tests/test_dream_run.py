@@ -665,3 +665,24 @@ def test_ops_json_is_applied_in_reorganize_mode_and_not_reapplied(world):
     assert subjects(world)[2] == "dream: first-run reorganization"
     assert "_retired/twin.md" in git(world.mem, "show", "--name-only", "--format=", "HEAD")
     assert log_lines(world)[-1].endswith("| ok")
+
+
+def test_max_digests_passes_the_oldest_and_leaves_the_rest_for_the_next_night(world):
+    world.cfg["caps"] = {"max_digests": 2}
+    world.config()
+    made = talk(world, 3)
+    for offset, (path, _) in enumerate(made):
+        stamp = time.time() - (10 - offset) * 3600
+        os.utime(str(path), (stamp, stamp))
+    assert run(force=True) == 0
+    argvs = [json.loads(l) for l in (world.calls.parent / "calls.argv").read_text().splitlines()]
+    system = argvs[-1][argvs[-1].index("--system-prompt") + 1]
+    assert "s1.md" in system and "s2.md" in system and "s3.md" not in system
+    assert sorted(dream.load_state()["transcripts"]) == sorted(str(p) for p, _ in made[:2])
+    assert "read=2" in log_lines(world)[-1]
+    assert run(force=True) == 0
+    assert sorted(dream.load_state()["transcripts"]) == sorted(str(p) for p, _ in made)
+
+
+def test_max_digests_defaults_to_forty():
+    assert dream.DEFAULTS["caps"]["max_digests"] == 40

@@ -92,6 +92,14 @@ def test_run_claude_pipes_prompt_on_stdin_and_saves_the_stream(tmp_path, fake):
     assert log.read_text() == out
 
 
+def test_a_result_whose_subtype_is_not_success_is_not_ok(tmp_path, fake):
+    capped = {"type": "result", "subtype": "error_max_turns", "is_error": False, "result": "partial"}
+    cfg, env = fake(stream(capped))
+    got = dream.run_claude(dream.claude_command(cfg, "sonnet", SYSTEM, 60, 5), PROMPT, env,
+                           tmp_path / "a.jsonl", tmp_path)
+    assert got["ok"] is False and "error_max_turns" in got["error"]
+
+
 def test_error_result_and_nonzero_exit_are_not_ok(tmp_path, fake):
     cfg, env = fake(stream(result("Not logged in", is_error=True)))
     cmd = dream.claude_command(cfg, "sonnet", SYSTEM, 60, 5)
