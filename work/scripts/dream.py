@@ -9,7 +9,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 DEFAULTS = {
     "models": {"extract": "sonnet", "check": "opus"},
@@ -903,6 +903,143 @@ def mark_promoted(memory_dir, memory_rel, promoted_to):
         return
     _single_line(promoted_to, "promoted_to")
     _put(path, _stamp(text, {"promoted_to": promoted_to}).encode("utf-8"))
+
+
+GIT_TIMEOUT = 120
+RETIRED_DIR = "_retired"
+INSTALL_HINT = "memory folder is not a git repo; run dream-install --init-memory"
+_NO_IDENTITY = re.compile(r"user\.(name|email)|who you are|no email was given|empty ident", re.IGNORECASE)
+_REPO_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX")
+
+
+def _git(memory_dir, args, check=True):
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_ENV}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        done = subprocess.run(["git", "-C", str(memory_dir)] + list(args), capture_output=True,
+                              timeout=GIT_TIMEOUT, env=env)
+    except FileNotFoundError:
+        raise ConfigError("git was not found on PATH")
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigError("git %s failed: %s" % (args[0], exc))
+    if check and done.returncode != 0:
+        err = done.stderr.decode("utf-8", "replace").strip() or done.stdout.decode("utf-8", "replace").strip()
+        if _NO_IDENTITY.search(err):
+            raise ConfigError("git has no user.name/user.email for the memory folder; set them with git config there")
+        raise ConfigError("git %s failed: %s" % (args[0], err))
+    return done
+
+
+def _out(memory_dir, args):
+    return _git(memory_dir, args).stdout.decode("utf-8", "replace").strip()
+
+
+def _require_repo(memory_dir):
+    """The memory folder must be the root of its own repo, so no git command reaches outside it."""
+    memory_dir = Path(memory_dir)
+    top = _git(memory_dir, ["rev-parse", "--show-toplevel"], check=False) if memory_dir.is_dir() else None
+    if top is None or top.returncode != 0:
+        raise ConfigError(INSTALL_HINT)
+    root = top.stdout.decode("utf-8", "replace").strip()
+    if not root or not os.path.samefile(root, str(memory_dir)):
+        raise ConfigError(INSTALL_HINT)
+    if _git(memory_dir, ["rev-parse", "--verify", "-q", "HEAD"], check=False).returncode != 0:
+        raise ConfigError(INSTALL_HINT)
+
+
+def _head(memory_dir):
+    return _out(memory_dir, ["rev-parse", "HEAD"])
+
+
+def _commit_args(message, paths=()):
+    args = ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", message]
+    return args + (["--"] + list(paths) if paths else [])
+
+
+def snapshot(memory_dir, today):
+    _require_repo(memory_dir)
+    if _out(memory_dir, ["status", "--porcelain"]):
+        _git(memory_dir, ["add", "-A"])
+        _git(memory_dir, _commit_args("pre-dream snapshot"))
+    return _head(memory_dir)
+
+
+def copy_global(memory_dir, global_md):
+    global_md = Path(global_md)
+    if not global_md.is_file():
+        return
+    _require_repo(memory_dir)
+    rel = "_global/CLAUDE.md"
+    target = Path(memory_dir) / "_global" / "CLAUDE.md"
+    data = global_md.read_bytes()
+    if target.is_file() and target.read_bytes() == data:
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    _git(memory_dir, ["add", "--", rel])
+    if _git(memory_dir, ["diff", "--cached", "--quiet", "--", rel], check=False).returncode != 0:
+        _git(memory_dir, _commit_args("dream: refresh global CLAUDE.md copy", [rel]))
+
+
+def commit_run(memory_dir, message):
+    _require_repo(memory_dir)
+    _git(memory_dir, ["add", "-A"])
+    if _git(memory_dir, ["diff", "--cached", "--quiet"], check=False).returncode != 0:
+        _git(memory_dir, _commit_args(message))
+    return _head(memory_dir)
+
+
+def reset_to(memory_dir, rev):
+    """Return the folder to `rev` exactly: tracked files, files and directories the run created, nested repos."""
+    _require_repo(memory_dir)
+    commit = _out(memory_dir, ["rev-parse", "--verify", "--end-of-options", "%s^{commit}" % rev])
+    _git(memory_dir, ["reset", "-q", "--hard", commit])
+    _git(memory_dir, ["clean", "-q", "-ffd"])
+
+
+def commit_message(read, changes, today=None):
+    today = today or dt.date.today()
+    lines = ["dream: %s" % today.isoformat(), ""]
+    if read:
+        lines.append("Read: %d conversations (%s)" % (len(read), ", ".join(read)))
+    else:
+        lines.append("Read: 0 conversations")
+    for key in ("added", "updated", "retired", "promoted"):
+        if changes.get(key):
+            lines.append("%s: %s" % (key.capitalize(), ", ".join(changes[key])))
+    return "\n".join(lines) + "\n"
+
+
+def _memory_name(path):
+    parts = path.split("/")
+    if parts[0] == "_global" or not path.endswith(".md") or path == "MEMORY.md":
+        return None
+    return parts[-1][:-3]
+
+
+def changes_since(memory_dir, rev):
+    _require_repo(memory_dir)
+    _git(memory_dir, ["add", "-A", "-N"])
+    raw = _git(memory_dir, ["diff", "--name-status", "-z", "-M", "--end-of-options", rev]).stdout
+    fields = raw.decode("utf-8", "replace").split("\0")
+    changes = {"added": [], "updated": [], "retired": []}
+    i = 0
+    while i < len(fields) and fields[i]:
+        status = fields[i][0]
+        paths = fields[i + 1:i + 3] if status in "RC" else fields[i + 1:i + 2]
+        i += 1 + len(paths)
+        path = paths[-1]
+        name = _memory_name(path)
+        if name is None:
+            continue
+        if path.startswith(RETIRED_DIR + "/"):
+            if status in "ARC":
+                changes["retired"].append(name)
+        elif status in "AC":
+            changes["added"].append(name)
+        elif status in "MR":
+            changes["updated"].append(name)
+    return {key: sorted(set(names)) for key, names in changes.items()}
 
 
 def _check_command(args):
