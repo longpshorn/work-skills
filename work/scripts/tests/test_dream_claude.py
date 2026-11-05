@@ -298,7 +298,8 @@ def test_extract_access_allows_only_reads_and_writes_inside_the_two_folders():
     assert access == ["--permission-mode", "dontAsk",
                       "--allowedTools", "Read", "Glob", "Grep",
                       "Edit(//m/mem/**)", "Edit(//s/run/**)",
-                      "--disallowedTools", "Edit(//m/mem/_global/**)",
+                      "--disallowedTools", "Edit(//m/mem/_global/**)", "Edit(//m/mem/.git/**)",
+                      "Edit(//m/mem/.gitignore)",
                       "--add-dir", "/m/mem", "/s/run"]
     assert "Bash" not in dream.EXTRACT_TOOLS.split(",")
 

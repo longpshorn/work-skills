@@ -1386,12 +1386,14 @@ def _rule_path(folder):
 
 
 def extract_access(memory_dir, run_dir):
-    """Flags that let the headless extract stage read anywhere it was pointed and write only in the two folders."""
+    """Flags that let the headless extract stage read anywhere it was pointed and write only in the two folders,
+    never in the memory folder's _global copy or its git files."""
     memory_rule, run_rule = _rule_path(memory_dir), _rule_path(run_dir)
     return ["--permission-mode", "dontAsk",
             "--allowedTools", "Read", "Glob", "Grep",
             "Edit(%s/**)" % memory_rule, "Edit(%s/**)" % run_rule,
-            "--disallowedTools", "Edit(%s/_global/**)" % memory_rule,
+            "--disallowedTools", "Edit(%s/_global/**)" % memory_rule, "Edit(%s/.git/**)" % memory_rule,
+            "Edit(%s/.gitignore)" % memory_rule,
             "--add-dir", str(Path(memory_dir).resolve()), str(Path(run_dir).resolve())]
 
 

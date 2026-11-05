@@ -603,7 +603,8 @@ def test_extract_stage_is_confined_to_the_memory_and_run_folders_and_runs_no_com
     assert extract[extract.index("--permission-mode") + 1] == "dontAsk"
     allowed = extract[extract.index("--allowedTools") + 1:extract.index("--disallowedTools")]
     assert "Edit(//%s/**)" % mem in allowed and not any(t.startswith("Write(") for t in allowed)
-    assert extract[extract.index("--disallowedTools") + 1] == "Edit(//%s/_global/**)" % mem
+    denied = extract[extract.index("--disallowedTools") + 1:extract.index("--add-dir")]
+    assert denied == ["Edit(//%s/%s)" % (mem, p) for p in ("_global/**", ".git/**", ".gitignore")]
     assert not any(t.startswith("Bash") for t in allowed)
     assert "Bash" not in extract[extract.index("--tools") + 1].split(",")
     check = next(a for a in argvs if a[0] == "check")
