@@ -51,15 +51,17 @@ def world(tmp_path, monkeypatch):
     state_file.write_text('{"state": "OPEN"}')
     fake_bin(bin_dir, "gh", 'echo "gh $*" >> "%s"\n'
              'case "$2" in create) echo https://github.com/acme/widgets/pull/7;; '
-             'view) cat "%s";; esac\n' % (log, state_file))
+             'view) cat "%s";; list) cat "%s";; esac\n' % (log, state_file, tmp_path / "pr-list"))
     fake_bin(bin_dir, "glab", 'echo "glab $*" >> "%s"\n'
              'case "$2" in create) echo https://gitlab.example.com/acme/widgets/-/merge_requests/9;; '
-             'view) cat "%s";; esac\n' % (log, state_file))
+             'view) cat "%s";; list) cat "%s";; esac\n' % (log, state_file, tmp_path / "pr-list"))
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
     memory = tmp_path / "mem"
     memory.mkdir()
     cfg = {"memory_dir": memory, "caps": CAPS, "repos": [RULE]}
-    return {"bare": bare, "repo": repo, "log": log, "cfg": cfg, "pr_state": state_file}
+    listing = tmp_path / "pr-list"
+    listing.write_text("[]")
+    return {"listing": listing, "bare": bare, "repo": repo, "log": log, "cfg": cfg, "pr_state": state_file}
 
 
 def test_rule_for_requires_a_matching_promote_true_rule():
@@ -252,3 +254,98 @@ def test_over_length_claude_md_aborts_before_commit(world):
     assert git(world["bare"], "branch", "--list") == before
     assert git(world["repo"], "branch", "--list") == "* main"
     assert git(world["repo"], "worktree", "list").count("\n") == 0
+
+
+def test_orphan_branch_under_a_case_variant_directory_is_reused(world):
+    repo, state = world["repo"], dream.default_state()
+    git(repo, "branch", "Docs/other")
+    hook = block_pushes(world)
+    dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"])
+    commit = git(repo, "rev-parse", "refs/heads/" + BRANCH)
+    hook.unlink()
+    url = dream.propose(repo, RULE, op("# Notes\nmore\n"), "y", TODAY + dt.timedelta(days=1), state, world["cfg"])
+    assert url
+    assert git(world["bare"], "rev-parse", "refs/heads/" + BRANCH + "~1") == commit
+
+
+def test_second_night_under_a_case_variant_directory_adds_a_commit(world):
+    repo, state = world["repo"], dream.default_state()
+    git(repo, "branch", "Docs/other")
+    notes = []
+    first = dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"], notes)
+    second = dream.propose(repo, RULE, op("# Notes\nmore\n"), "y", TODAY + dt.timedelta(days=1),
+                           state, world["cfg"], notes)
+    assert first and first == second, notes
+    assert git(world["bare"], "rev-list", "--count", "main..refs/heads/" + BRANCH) == "2"
+
+
+def test_an_open_mr_for_the_branch_is_adopted_not_duplicated(world):
+    world["listing"].write_text('[{"number": 12, "url": "https://github.com/acme/widgets/pull/12"}]')
+    repo, state = world["repo"], dream.default_state()
+    url = dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"])
+    assert url.endswith("/pull/12")
+    assert state["open_mrs"][str(repo.resolve())]["number"] == 12
+    log = world["log"].read_text()
+    assert "pr create" not in log and "pr list --head " + BRANCH in log and "-R acme/widgets" in log
+
+
+def test_a_gitlab_mr_for_the_branch_is_adopted(world):
+    repo, state = world["repo"], dream.default_state()
+    glab = "https://gitlab.example.com/acme/widgets.git"
+    git(repo, "remote", "set-url", "origin", glab)
+    git(repo, "config", "url.%s.insteadOf" % world["bare"], glab)
+    world["listing"].write_text('[{"iid": 5, "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/5"}]')
+    rule = dict(RULE, match="gitlab.example.com/acme/widgets")
+    url = dream.propose(repo, rule, op(), "x", TODAY, state, world["cfg"])
+    assert url.endswith("/merge_requests/5")
+    log = world["log"].read_text()
+    assert "mr create" not in log and "glab mr list --source-branch " + BRANCH + " -F json" in log
+
+
+def test_create_that_printed_no_number_is_adopted_next_night(world, monkeypatch):
+    repo, state = world["repo"], dream.default_state()
+    real = dream.create_mr
+    monkeypatch.setattr(dream, "create_mr", lambda *a: "https://github.com/acme/widgets/pulls")
+    assert dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"]) is None
+    monkeypatch.setattr(dream, "create_mr", real)
+    world["listing"].write_text('[{"number": 3, "url": "https://github.com/acme/widgets/pull/3"}]')
+    url = dream.propose(repo, RULE, op(), "x", TODAY + dt.timedelta(days=1), state, world["cfg"])
+    assert url.endswith("/pull/3") and world["log"].read_text().count("pr create") == 0
+
+
+def test_diverged_recorded_branch_skips_the_repo_without_pushing(world, tmp_path):
+    repo, state = world["repo"], dream.default_state()
+    dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"])
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(world["bare"]), str(other)], check=True)
+    git(other, "config", "user.email", "t@example.com")
+    git(other, "config", "user.name", "t")
+    git(other, "checkout", "-q", "-B", BRANCH, "origin/main")
+    (other / "x.md").write_text("x\n")
+    git(other, "add", ".")
+    git(other, "commit", "-q", "-m", "reviewer edit")
+    git(other, "push", "-q", "-f", "origin", BRANCH)
+    remote_head = git(world["bare"], "rev-parse", "refs/heads/" + BRANCH)
+    notes = []
+    assert dream.propose(repo, RULE, op("# Notes\nmore\n"), "y", TODAY + dt.timedelta(days=1),
+                         state, world["cfg"], notes) is None
+    assert any("diverge" in n for n in notes)
+    assert git(world["bare"], "rev-parse", "refs/heads/" + BRANCH) == remote_head
+
+
+def test_retry_pushes_continues_past_a_failing_repo(world):
+    repo, state = world["repo"], dream.default_state()
+    hook = block_pushes(world)
+    dream.propose(repo, RULE, op(), "x", TODAY, state, world["cfg"])
+    hook.unlink()
+    good = state["open_mrs"].pop(str(repo.resolve()))
+    state["open_mrs"]["/nonexistent/repo"] = {"branch": "x", "forge": "github", "number": None, "url": None}
+    state["open_mrs"][str(repo.resolve())] = good
+    notes = []
+    dream.retry_pushes(state, world["cfg"], notes)
+    assert notes
+    assert state["open_mrs"][str(repo.resolve())]["number"] == 7
+
+
+def test_default_state_has_no_pending_pushes():
+    assert "pending_pushes" not in dream.default_state()
