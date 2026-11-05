@@ -393,51 +393,50 @@ class Busy(Exception):
     pass
 
 
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except (ProcessLookupError, OSError):
-        return False
-    return True
+def _lock_file(fd):
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(fd):
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 class RunLock:
-    """Single-run lock holding the owner's pid; a lock whose pid is gone is taken over."""
+    """Single-run lock: an OS advisory lock on a file the kernel frees when the holder dies."""
 
     def __enter__(self):
         directory = state_dir()
         directory.mkdir(parents=True, exist_ok=True)
-        self.path = directory / "lock"
-        for _ in range(2):
-            try:
-                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                if self._holder_alive():
-                    raise Busy(str(self.path))
-                try:
-                    self.path.unlink()
-                except FileNotFoundError:
-                    pass
-                continue
-            with os.fdopen(fd, "w") as handle:
-                handle.write(str(os.getpid()))
-            return self
-        raise Busy(str(self.path))
-
-    def _holder_alive(self):
+        path = directory / "lock"
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT)
         try:
-            pid = int(self.path.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return False
-        return pid > 0 and _pid_alive(pid)
+            _lock_file(fd)
+        except OSError:
+            os.close(fd)
+            raise Busy(str(path))
+        self.fd = fd
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        return self
 
     def __exit__(self, *exc):
         try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+            _unlock_file(self.fd)
+        finally:
+            os.close(self.fd)
         return False
 
 

@@ -27,41 +27,69 @@ def test_corrupt_state_is_set_aside(dream_env):
     assert not (dream_env.state / "state.json").exists()
 
 
-def _dead_pid():
-    child = subprocess.Popen([sys.executable, "-c", "pass"])
-    child.wait()
-    return child.pid
+CHILD = (
+    "import sys, time\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import dream\n"
+    "lock = dream.RunLock().__enter__()\n"
+    "print('locked', flush=True)\n"
+    "time.sleep(60)\n"
+)
 
 
-def test_lock_blocks_a_live_pid_and_takes_over_a_dead_one(dream_env):
+def _hold_in_child():
+    scripts = os.path.dirname(os.path.abspath(dream.__file__))
+    child = subprocess.Popen([sys.executable, "-c", CHILD, scripts], stdout=subprocess.PIPE, text=True)
+    assert child.stdout.readline().strip() == "locked"
+    return child
+
+
+def test_second_lock_while_held_is_busy_and_leaves_holder_intact(dream_env):
+    with dream.RunLock():
+        with pytest.raises(dream.Busy):
+            with dream.RunLock():
+                pass
+        with pytest.raises(dream.Busy):
+            with dream.RunLock():
+                pass
+    with dream.RunLock():
+        pass
+
+
+def test_lock_held_by_a_killed_child_is_free_afterwards(dream_env):
+    child = _hold_in_child()
+    try:
+        with pytest.raises(dream.Busy):
+            with dream.RunLock():
+                pass
+    finally:
+        child.kill()
+        child.wait()
+        child.stdout.close()
+    with dream.RunLock():
+        pass
+
+
+def test_leftover_lock_file_without_a_holder_is_taken(dream_env):
     dream_env.state.mkdir(parents=True)
     lock = dream_env.state / "lock"
-    lock.write_text(str(os.getpid()), encoding="utf-8")
-    with pytest.raises(dream.Busy):
-        with dream.RunLock():
-            pass
-    assert lock.read_text(encoding="utf-8") == str(os.getpid())
-    lock.write_text(str(_dead_pid()), encoding="utf-8")
+    lock.write_text("garbage", encoding="utf-8")
     with dream.RunLock():
-        assert lock.read_text(encoding="utf-8") == str(os.getpid())
-
-
-def test_lock_with_unreadable_pid_is_taken_over(dream_env):
-    dream_env.state.mkdir(parents=True)
-    (dream_env.state / "lock").write_text("garbage", encoding="utf-8")
+        pass
+    lock.write_text(str(os.getpid()), encoding="utf-8")
     with dream.RunLock():
         pass
 
 
 def test_lock_is_released_on_exit_and_on_exception(dream_env):
-    lock = dream_env.state / "lock"
     with dream.RunLock():
-        assert lock.exists()
-    assert not lock.exists()
+        pass
     with pytest.raises(RuntimeError):
         with dream.RunLock():
             raise RuntimeError("boom")
-    assert not lock.exists()
+    with dream.RunLock():
+        pass
+    assert (dream_env.state / "lock").exists()
 
 
 def test_log_line_format():
