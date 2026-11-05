@@ -373,3 +373,18 @@ def test_retry_pushes_leaves_an_up_to_date_mr_branch_alone(world):
     dream.retry_pushes(state, world["cfg"], notes)
     hook.unlink()
     assert notes == []
+
+
+def test_a_merged_mr_record_does_not_defer_later_promotions(world):
+    repo, state = world["repo"], dream.default_state()
+    dream.propose(repo, RULE, op(), "one", TODAY, state, world["cfg"])
+    world["pr_state"].write_text('{"state": "MERGED"}')
+    git(repo, "pull", "-q", "origin", "main")
+    (repo / "CLAUDE.md").write_text("# Team edit\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "team edit")
+    git(repo, "push", "-q", "origin", "main")
+    root = repo.resolve()
+    assert dream._landing_ref(root, state) == "refs/remotes/origin/main"
+    dream._require_same_base(root, op("# Team edit\nnew rule\n"), state)
+    assert str(root) not in state["open_mrs"]

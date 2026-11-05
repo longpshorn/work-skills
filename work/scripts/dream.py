@@ -1246,6 +1246,22 @@ def _publish(repo, record, base, title, reviewers, notes):
     return url
 
 
+def _live_record(repo, state):
+    """The repo's recorded branch, after dropping a record whose MR is closed or whose branch is gone.
+
+    Expects a fresh fetch; raises ConfigError when the MR state cannot be read."""
+    key = str(Path(repo).resolve())
+    record = state["open_mrs"].get(key)
+    if record and record.get("number") is not None and not mr_is_open(record["forge"], record["number"], repo):
+        record = None
+        del state["open_mrs"][key]
+    if record and not (_has_ref(repo, "refs/heads/" + record["branch"])
+                       or _has_ref(repo, "refs/remotes/origin/" + record["branch"])):
+        record = None
+        del state["open_mrs"][key]
+    return record
+
+
 def propose(repo, rule, ops, summary, today, state, cfg, notes=None):
     notes = [] if notes is None else notes
     repo = Path(repo)
@@ -1260,20 +1276,11 @@ def propose(repo, rule, ops, summary, today, state, cfg, notes=None):
     base = _default_branch(repo)
     local, remote = _branches(repo, "refs/heads/"), _branches(repo, "refs/remotes/origin/")
 
-    record = state["open_mrs"].get(key)
-    if record and record.get("number") is not None:
-        try:
-            still_open = mr_is_open(record["forge"], record["number"], repo)
-        except ConfigError as exc:
-            notes.append("merge request status unknown: %s" % exc)
-            return None
-        if not still_open:
-            record = None
-            del state["open_mrs"][key]
-    if record and not (_has_ref(repo, "refs/heads/" + record["branch"])
-                       or _has_ref(repo, "refs/remotes/origin/" + record["branch"])):
-        record = None
-        del state["open_mrs"][key]
+    try:
+        record = _live_record(repo, state)
+    except ConfigError as exc:
+        notes.append("merge request status unknown: %s" % exc)
+        return None
 
     if record:
         branch = record["branch"]
@@ -1662,7 +1669,7 @@ def _landing_ref(repo, state):
     """The tip propose will commit on: the recorded branch (fast-forwarded to origin when behind it),
     else origin's default branch."""
     _git(repo, ["fetch", "-q", "origin"])
-    record = state["open_mrs"].get(str(repo))
+    record = _live_record(repo, state)
     if record:
         local, remote = "refs/heads/" + record["branch"], "refs/remotes/origin/" + record["branch"]
         have_local, have_remote = _has_ref(repo, local), _has_ref(repo, remote)
