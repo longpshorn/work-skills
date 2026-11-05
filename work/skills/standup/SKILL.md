@@ -8,12 +8,13 @@ description: Cross-workstream status view from the user's work store. Use for "/
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
 1. Run `work-tools index`. Exit 1 means some status files have header errors; list them first and offer to fix them. Exit 4 means there is no work store yet; say so, offer `/work:new`, and stop.
-2. Read `<store>/index.md` and run `work-tools drift --all`.
+2. Read `<store>/index.md` and run `work-tools drift --all`. Also run `work-tools dream-status`; it prints one line only when the nightly dream run is failing or stale.
 3. Print these sections, leaving out any that are empty:
    - **Blocked:** workstream · next
    - **Stale** (⚠, 14+ days): workstream · age
    - **Uncommitted / unpushed / changed sources:** from drift
    - **Top 5 next steps:** order by state (`active`, `review`, `blocked`, `scoped`, `idea`), then oldest `updated` first
+   - **Dream:** the `dream-status` line, shown under the sections only when it prints something
 4. Offer `/work:resume <name>` for the top item.
 
 Do not commit the regenerated `index.md` and `log.md` or the OKF `type` fields `index` may add; the next `/work:checkpoint` will. Change nothing else.

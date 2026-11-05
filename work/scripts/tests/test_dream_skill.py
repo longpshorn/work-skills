@@ -145,3 +145,27 @@ def test_denylist_reader_follows_the_env_path_and_ignores_comments(tmp_path, mon
 
 def test_skill_has_no_unfilled_markers():
     assert not re.search(r"\b(?:TBD|TODO)\b", skill_text())
+
+
+def test_readme_lists_the_dream_command_and_install():
+    text = flat((REPO / "README.md").read_text(encoding="utf-8"))
+    for phrase in ("| `/work:dream`", "dream-install", "dream.json", "never merges", "unattended",
+                   "paid models", "default branch"):
+        assert phrase in text
+
+
+def test_wrap_points_at_dream_for_memory():
+    step = next(line for line in (PLUGIN / "skills" / "wrap" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+                if line.startswith("3. **Memory.**"))
+    assert "nightly dream run" in step
+
+
+def test_standup_shows_dream_status():
+    text = (PLUGIN / "skills" / "standup" / "SKILL.md").read_text(encoding="utf-8")
+    assert "work-tools dream-status" in text
+    assert "only when it prints" in text
+
+
+def test_store_readme_lists_dream_among_skills():
+    text = (PLUGIN / "templates" / "store-README.md").read_text(encoding="utf-8")
+    assert "`/work:dream`" in next(line for line in text.splitlines() if line.startswith("Skills:"))
