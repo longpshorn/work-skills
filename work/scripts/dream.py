@@ -1496,6 +1496,7 @@ def opus_check(item, memory_text, target_text, cfg, run_dir, env=None):
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "dream" / "SKILL.md"
 REORGANIZE_SUBJECT = "dream: first-run reorganization"
+MARK_SUBJECT = "dream: mark promoted"
 
 
 class StageFailed(Exception):
@@ -1585,10 +1586,45 @@ def _promotion_root(target, cfg):
     rule = rule_for(_origin_url(target), cfg)
     if rule is None:
         raise ValueError("no promote rule for repo %s" % target)
+    top = _out(target, ["rev-parse", "--show-toplevel"])
+    if not os.path.samefile(top, target):
+        raise ValueError("%s is not the top level of its repo" % target)
     return Path(target).resolve(), rule
 
 
-def _vet(item, cfg, today, promoted):
+def _landing_ref(repo, state):
+    """The ref a repo promotion's write lands on: the recorded branch tip, else origin's default branch."""
+    _git(repo, ["fetch", "-q", "origin"])
+    record = state["open_mrs"].get(str(repo))
+    if record:
+        branch = record["branch"]
+        for ref in ("refs/heads/" + branch, "refs/remotes/origin/" + branch):
+            if _has_ref(repo, ref):
+                return ref
+    return "refs/remotes/origin/" + _default_branch(repo)
+
+
+def _require_same_base(repo, ops, state):
+    """Defer unless each target file in the checkout is byte-identical to the file on the landing ref."""
+    ref = _landing_ref(repo, state)
+    for op in ops:
+        rel = op["path"].replace("\\", "/")
+        shown = _git(repo, ["show", "%s:%s" % (ref, rel)], check=False)
+        landing = shown.stdout if shown.returncode == 0 else None
+        local = repo / rel
+        here = local.read_bytes() if local.is_file() else None
+        if here != landing:
+            raise ValueError("deferred: the checkout's %s differs from %s" % (rel, ref))
+
+
+def _retiring(items):
+    """Casefolded memory paths that any item of this run retires."""
+    return {str(op.get("path")).replace("\\", "/").casefold()
+            for item in items if isinstance(item, dict) and isinstance(item.get("ops"), list)
+            for op in item["ops"] if isinstance(op, dict) and op.get("op") == "retire"}
+
+
+def _vet(item, cfg, today, promoted, ctx):
     """Everything about an item that can be decided without the reviewer; raises ValueError to drop it."""
     if not isinstance(item, dict):
         raise ValueError("item is not an object")
@@ -1613,23 +1649,34 @@ def _vet(item, cfg, today, promoted):
         raise ValueError("promotion names a missing memory %s" % item.get("memory"))
     if "promoted_to" in parse_memory(vetted["memory_text"]):
         raise ValueError("%s is already promoted" % item.get("memory"))
+    if str(item["memory"]).replace("\\", "/").casefold() in ctx["retiring"]:
+        raise ValueError("%s is retired by this run" % item["memory"])
     if not vetted["target_ops"]:
         raise ValueError("promotion has no target write")
     root, rule = _promotion_root(item.get("target"), cfg)
     _plan(vetted["target_ops"], memory_dir, root, today, caps)
+    keys = {str(safe_path(root, op["path"])).casefold() for op in vetted["target_ops"]}
+    taken = keys & ctx["taken"]
+    if taken:
+        raise ValueError("deferred: %s already has a promotion this run" % ", ".join(sorted(taken)))
+    if rule is not None:
+        _require_same_base(root, vetted["target_ops"], ctx["state"])
     first = root / vetted["target_ops"][0]["path"]
     vetted.update(target=item.get("target"), root=root, rule=rule, promoted_to=str(first),
-                  target_text=_read_text(first))
+                  target_text=_read_text(first), keys=keys)
     return vetted
 
 
-def _review(items, cfg, today, run_dir, env, notes):
-    """Opus-check each item and apply its approved memory ops; returns the approved promotions."""
+def _review(items, cfg, today, run_dir, env, state, notes):
+    """Opus-check each item and apply its approved memory ops; returns the approved promotions.
+
+    Global promotions are marked here; repo promotions only once their branch holds the write."""
     promotions = []
+    ctx = {"state": state, "taken": set(), "retiring": _retiring(items)}
     for item in items:
         label = item.get("id") if isinstance(item, dict) else None
         try:
-            vetted = _vet(item, cfg, today, len(promotions))
+            vetted = _vet(item, cfg, today, len(promotions), ctx)
         except (ValueError, ConfigError) as exc:
             notes.append("item %s dropped: %s" % (label, exc))
             continue
@@ -1643,7 +1690,9 @@ def _review(items, cfg, today, run_dir, env, notes):
             notes.append("item %s not applied: %s" % (label, exc))
             continue
         if item["kind"] == "promotion":
-            mark_promoted(cfg["memory_dir"], item["memory"], vetted["promoted_to"])
+            if vetted["target"] == "global":
+                mark_promoted(cfg["memory_dir"], item["memory"], vetted["promoted_to"])
+            ctx["taken"] |= vetted["keys"]
             promotions.append(vetted)
     return promotions
 
@@ -1663,23 +1712,37 @@ def _restore_global(backups):
     return "; global files not restored: %s" % ", ".join(str(p) for p in failed) if failed else ""
 
 
+def _branch_tip(repo, state):
+    record = state["open_mrs"].get(str(repo))
+    if not record:
+        return None
+    done = _git(repo, ["rev-parse", "-q", "--verify", "refs/heads/" + record["branch"]], check=False)
+    return (record["branch"], done.stdout.decode("utf-8", "replace").strip() if done.returncode == 0 else None)
+
+
 def _propose_all(promotions, cfg, today, state, notes):
-    """One merge request per repo for its approved promotions; failures become notes."""
+    """One merge request per repo for its approved promotions; failures become notes.
+
+    Returns the MR URLs and the promotions whose write is now committed on a recorded branch."""
     by_repo = {}
     for vetted in promotions:
         by_repo.setdefault(vetted["root"], []).append(vetted)
-    mrs = []
+    mrs, landed = [], []
     for repo, group in by_repo.items():
         ops = [op for vetted in group for op in vetted["target_ops"]]
         summary = "; ".join(_one_line(v["item"].get("summary") or "memory promotion") for v in group)
+        before = _branch_tip(repo, state)
         try:
             url = propose(repo, group[0]["rule"], ops, summary, today, state, cfg, notes)
         except (ValueError, ConfigError, OSError) as exc:
             notes.append("promotion to %s not proposed: %s" % (repo, exc))
             continue
+        after = _branch_tip(repo, state)
+        if after and after[1] and after != before:
+            landed.extend(group)
         if url:
             mrs.append(url)
-    return mrs
+    return mrs, landed
 
 
 def _run_locked(cfg, now, force, skill, say):
@@ -1711,11 +1774,12 @@ def _run_locked(cfg, now, force, skill, say):
         say("extracting")
         _stage(cfg, "extract", skill, run_dir, [d["path"] for d in digests], env)
         say("reviewing checks")
-        promotions = _review(_load_checks(run_dir), cfg, today, run_dir, env, notes)
+        promotions = _review(_load_checks(run_dir), cfg, today, run_dir, env, state, notes)
         _require_check(cfg)
         changes = changes_since(memory_dir, reset_point)
-        changes["promoted"] = [_memory_name(v["item"]["memory"].replace("\\", "/")) for v in promotions]
-        _write_global([v for v in promotions if v["target"] == "global"], cfg, today, backups)
+        global_promotions = [v for v in promotions if v["target"] == "global"]
+        changes["promoted"] = [_memory_name(v["item"]["memory"].replace("\\", "/")) for v in global_promotions]
+        _write_global(global_promotions, cfg, today, backups)
         commit_run(memory_dir, commit_message([d["session"] for d in digests], changes, today))
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
@@ -1733,8 +1797,13 @@ def _run_locked(cfg, now, force, skill, say):
         state["last_success"] = today.isoformat()
         save_state(state)
         say("proposing repo promotions")
-        mrs = _propose_all([v for v in promotions if v["target"] != "global"], cfg, today, state, notes)
+        mrs, landed = _propose_all([v for v in promotions if v["target"] != "global"], cfg, today, state, notes)
         save_state(state)
+        for vetted in landed:
+            mark_promoted(memory_dir, vetted["item"]["memory"], vetted["promoted_to"])
+            changes["promoted"].append(_memory_name(vetted["item"]["memory"].replace("\\", "/")))
+        if landed:
+            commit_run(memory_dir, MARK_SUBJECT + "\n")
     except Exception as exc:
         _log(today, read, {}, [], False, "after the memory commit: %s" % exc, notes)
         return 1

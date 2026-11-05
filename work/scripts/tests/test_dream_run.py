@@ -145,11 +145,11 @@ def seed(w, names):
     git(w.mem, "commit", "-q", "-m", "seed")
 
 
-def promotion(name, target, content=None):
+def promotion(name, target, content=None, path="CLAUDE.md"):
     content = content or "# Global\n- rule from %s\n" % name
     return {"id": name, "kind": "promotion", "quote": "always %s" % name, "session": "s1", "uuid": "s1-u1",
             "memory": "%s.md" % name, "target": target, "summary": "promote %s" % name,
-            "ops": [{"op": "write", "root": "target", "path": "CLAUDE.md", "content": content}]}
+            "ops": [{"op": "write", "root": "target", "path": path, "content": content}]}
 
 
 def meta(w, name):
@@ -260,16 +260,43 @@ def test_promotion_cap_and_unlisted_repo_are_enforced(world):
     names = ["p%d" % i for i in range(1, 9)]
     seed(world, names)
     other = init_repo(world.tmp / "other", remote="https://example.com/x/other.git")
-    checks = [promotion("p8", str(other))] + [promotion(n, "global") for n in names[:7]]
+    checks = [promotion("p8", str(other))] + [promotion(n, "global", path="%s/CLAUDE.md" % n)
+                                              for n in names[:7]]
     world.plan({"extract": {"checks": checks}})
     assert run() == 0
     promoted = [n for n in names[:7] if "promoted_to" in meta(world, n)]
     assert promoted == names[:5]
+    assert [n for n in names[:7] if (world.gmd.parent / n / "CLAUDE.md").exists()] == names[:5]
     assert "promoted_to" not in meta(world, "p8")
     assert not (other / "CLAUDE.md").exists()
-    assert world.gmd.read_text(encoding="utf-8") == "# Global\n- rule from p5\n"
     line = log_lines(world)[-1]
     assert "promoted=5" in line and str(other) in line and "| ok" in line
+
+
+def test_second_promotion_to_the_same_target_is_deferred(world):
+    talk(world, 3)
+    seed(world, ["p1", "p2"])
+    world.plan({"extract": {"checks": [promotion("p1", "global"), promotion("p2", "global")]}})
+    assert run() == 0
+    assert meta(world, "p1")["promoted_to"] == str(world.gmd)
+    assert "promoted_to" not in meta(world, "p2")
+    assert world.gmd.read_text(encoding="utf-8") == "# Global\n- rule from p1\n"
+    line = log_lines(world)[-1]
+    assert "promoted=1" in line and "item p2 dropped: deferred" in line
+
+
+def test_promotion_of_a_memory_the_run_retires_is_dropped(world):
+    talk(world, 3)
+    seed(world, ["p1"])
+    retire = {"id": "c1", "kind": "contradiction", "quote": "q", "session": "s1", "uuid": "s1-u1",
+              "memory": "p1.md", "summary": "retire p1",
+              "ops": [{"op": "retire", "path": "p1.md", "superseded_by": "none"}]}
+    world.plan({"extract": {"checks": [promotion("p1", "global"), retire]}})
+    assert run() == 0
+    assert not world.gmd.exists()
+    assert (world.mem / "_retired" / "p1.md").exists()
+    assert "promoted_to" not in dream.parse_memory((world.mem / "_retired" / "p1.md").read_text())
+    assert "item p1 dropped" in log_lines(world)[-1]
 
 
 def test_first_run_commits_reorganization_before_extraction(world):
@@ -370,11 +397,18 @@ def test_restore_failed_from_apply_still_resets_to_snapshot(world, monkeypatch):
     assert "failed: rollback could not restore" in log_lines(world)[-1]
 
 
-def test_repo_promotion_proposes_after_the_memory_commit(world, monkeypatch):
-    url = "https://github.com/acme/widgets.git"
+RULE = {"match": "acme/widgets", "branch": "docs/memory-{date}", "commit": "docs: {summary}", "promote": True}
+
+
+def forge_repo(world, monkeypatch, url="https://github.com/acme/widgets.git", origin_files=None):
+    """A checkout whose origin is a local bare repo behind `url`, with a fake gh; returns (repo, bare)."""
     bare = world.tmp / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     seed_repo = init_repo(world.tmp / "seed", remote=str(bare))
+    for rel, text in (origin_files or {}).items():
+        (seed_repo / rel).write_text(text, encoding="utf-8")
+        git(seed_repo, "add", "-A")
+        git(seed_repo, "commit", "-q", "-m", "files")
     git(seed_repo, "push", "-q", "origin", "main")
     repo = world.tmp / "repo"
     subprocess.run(["git", "clone", "-q", str(bare), str(repo)], check=True)
@@ -387,20 +421,96 @@ def test_repo_promotion_proposes_after_the_memory_commit(world, monkeypatch):
     fake_bin(forge_bin, "gh", 'case "$2" in create) echo https://github.com/acme/widgets/pull/7;; '
                               'list) echo "[]";; esac\n')
     monkeypatch.setenv("PATH", str(forge_bin) + os.pathsep + os.environ["PATH"])
-    world.cfg["repos"] = [{"match": "github.com/acme/widgets", "branch": "docs/memory-{date}",
-                           "commit": "docs: {summary}", "promote": True}]
+    world.cfg["repos"] = [RULE]
     world.config()
     talk(world, 3)
     seed(world, ["p1"])
+    return repo, bare
+
+
+def test_repo_promotion_proposes_after_the_memory_commit(world, monkeypatch):
+    repo, bare = forge_repo(world, monkeypatch)
     world.plan({"extract": {"checks": [promotion("p1", str(repo), "# Repo\n- run the linter\n")]}})
     assert run() == 0
     branch = "docs/memory-%s" % dt.date.today().isoformat()
     assert git(bare, "show", "%s:CLAUDE.md" % branch) == "# Repo\n- run the linter"
     assert not (repo / "CLAUDE.md").exists()
     assert meta(world, "p1")["promoted_to"] == str(repo.resolve() / "CLAUDE.md")
+    assert subjects(world)[-1] == "dream: mark promoted"
+    assert git(world.mem, "show", "--name-only", "--format=", "HEAD") == "p1.md"
+    assert git(world.mem, "status", "--porcelain") == ""
     line = log_lines(world)[-1]
     assert "mrs=https://github.com/acme/widgets/pull/7" in line and "promoted=1" in line
     assert dream.load_state()["open_mrs"][str(repo.resolve())]["number"] == 7
+
+
+def _unrecorded_branch(world, repo, bare):
+    git(repo, "push", "-q", "origin", "main:refs/heads/docs/memory-%s" % dt.date.today().isoformat())
+
+
+def _diverged(world, repo, bare):
+    git(repo, "checkout", "-q", "-b", "docs/memory-old")
+    (repo / "x.txt").write_text("theirs\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "theirs")
+    git(repo, "push", "-q", "origin", "docs/memory-old")
+    git(repo, "reset", "-q", "--hard", "HEAD~1")
+    (repo / "x.txt").write_text("mine\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "mine")
+    git(repo, "checkout", "-q", "main")
+    _record(repo, "docs/memory-old")
+
+
+def _guard_refuses(world, repo, bare):
+    _record(repo, "main")
+
+
+def _record(repo, branch):
+    state = dream.load_state()
+    state["open_mrs"][str(repo.resolve())] = {"branch": branch, "forge": "github", "number": None, "url": None}
+    dream.save_state(state)
+
+
+@pytest.mark.parametrize("url, setup", [
+    ("https://github.com/acme/widgets.git", _unrecorded_branch),
+    ("https://github.com/acme/widgets.git", _diverged),
+    ("https://code.example.com/acme/widgets.git", None),
+    ("https://github.com/acme/widgets.git", _guard_refuses),
+], ids=["unrecorded-branch", "diverged", "no-forge", "guard"])
+def test_failed_proposal_leaves_the_memory_unmarked(world, monkeypatch, url, setup):
+    repo, bare = forge_repo(world, monkeypatch, url=url)
+    if setup:
+        setup(world, repo, bare)
+    world.plan({"extract": {"checks": [promotion("p1", str(repo), "# Repo\n- run the linter\n")]}})
+    assert run() == 0
+    assert "promoted_to" not in meta(world, "p1")
+    assert "dream: mark promoted" not in subjects(world)
+    assert git(world.mem, "status", "--porcelain") == ""
+    assert "promoted=0" in log_lines(world)[-1]
+
+
+@pytest.mark.parametrize("local, reviewed", [("# Repo\n", True), ("# Repo\nlocal edit\n", False)],
+                         ids=["identical", "differs"])
+def test_repo_promotion_needs_the_checkout_to_match_the_landing_ref(world, monkeypatch, local, reviewed):
+    repo, bare = forge_repo(world, monkeypatch, origin_files={"CLAUDE.md": "# Repo\n"})
+    (repo / "CLAUDE.md").write_text(local, encoding="utf-8")
+    world.plan({"extract": {"checks": [promotion("p1", str(repo), "# Repo\n- run the linter\n")]}})
+    assert run() == 0
+    assert ("check" in calls(world)) is reviewed
+    assert ("promoted_to" in meta(world, "p1")) is reviewed
+    if not reviewed:
+        assert "item p1 dropped: deferred" in log_lines(world)[-1]
+
+
+def test_repo_promotion_target_must_be_the_repo_top_level(world, monkeypatch):
+    repo, bare = forge_repo(world, monkeypatch)
+    (repo / "sub").mkdir()
+    world.plan({"extract": {"checks": [promotion("p1", str(repo / "sub"), "# Repo\n")]}})
+    assert run() == 0
+    assert calls(world) == ["extract"]
+    assert "promoted_to" not in meta(world, "p1")
+    assert "not the top level" in log_lines(world)[-1]
 
 
 def test_cli_dream_run_now_forces_and_prints_nothing(world, capsys):
