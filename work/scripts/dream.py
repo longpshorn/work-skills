@@ -664,6 +664,8 @@ def safe_path(root, rel):
         raise UnsafePath("absolute path: %s" % rel)
     if ".." in flat.split("/"):
         raise UnsafePath("path escapes its root: %s" % rel)
+    if not rel.isprintable():
+        raise UnsafePath("unprintable path segment: %r" % rel)
     base = root.resolve()
     full = (base / rel).resolve()
     try:

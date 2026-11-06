@@ -39,6 +39,22 @@ def test_safe_path_rejects_escapes(tmp_path):
     assert dream.safe_path(root, "a/b/c.md") == root.resolve() / "a" / "b" / "c.md"
 
 
+def test_safe_path_refuses_unprintable_segments_before_resolving(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+
+    def windows_resolve(self, strict=False):
+        if not str(self).isprintable():
+            raise OSError(123, "The filename, directory name, or volume label syntax is incorrect")
+        return real_resolve(self, strict=strict)
+
+    real_resolve = type(root).resolve
+    monkeypatch.setattr(type(root), "resolve", windows_resolve)
+    for rel in ("a\x0bb.md", "a‮b.md", "d\x85/x.md"):
+        with pytest.raises(dream.UnsafePath):
+            dream.safe_path(root, rel)
+
+
 def test_unsafe_op_aborts_the_whole_batch(tmp_path):
     mem = memory_dir(tmp_path)
     ops = [
