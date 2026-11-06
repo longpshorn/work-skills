@@ -260,6 +260,16 @@ def test_opus_reject_drops_the_item_and_approve_applies_it(world, verdict, retir
     assert ("retired=1" in log_lines(world)[-1]) is retired
 
 
+def test_the_reviewer_sees_the_memory_index(world):
+    talk(world, 3)
+    item = {"id": "c1", "kind": "contradiction", "quote": "we stopped doing that", "session": "s1",
+            "uuid": "s1-u1", "memory": "old.md", "summary": "retire old",
+            "ops": [{"op": "retire", "path": "old.md", "superseded_by": "none"}]}
+    world.plan({"extract": {"checks": [item]}, "verdicts": {"Review one": "reject", "[old](old.md)": "approve"}})
+    assert run() == 0
+    assert (world.mem / "_retired" / "old.md").exists()
+
+
 def test_promotion_cap_and_unlisted_repo_are_enforced(world):
     world.cfg["caps"] = {"promotions": 1}
     world.config()

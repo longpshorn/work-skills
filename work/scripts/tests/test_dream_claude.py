@@ -214,6 +214,14 @@ def test_opus_prompt_contains_only_candidate_quote_and_touched_text(fake, tmp_pa
     assert "[work-dream]" in prompt
 
 
+def test_opus_prompt_carries_the_index_and_the_memory_format(fake, tmp_path):
+    cfg, env = fake(stream(result('{"verdict": "approve", "reason": "ok"}')))
+    dream.opus_check(ITEM, "MEMORY-TEXT", None, cfg, tmp_path / "run", env=env, index_text="INDEX-TEXT")
+    prompt = (fake.rec / "stdin").read_text()
+    assert "<index>\nINDEX-TEXT\n</index>" in prompt
+    assert "how to apply it" in prompt and "adds no step" in prompt
+
+
 def test_opus_check_runs_with_no_tools_bounded_and_unpersisted(fake, tmp_path):
     check(fake, tmp_path, '{"verdict": "approve", "reason": "ok"}')
     argv = (fake.rec / "argv").read_text().split("\n")

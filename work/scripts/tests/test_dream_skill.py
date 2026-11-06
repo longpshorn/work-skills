@@ -103,6 +103,7 @@ def test_skill_states_the_required_rules():
         "quote only the sentence that states what was proven",
         "`_global/` holds a read-only copy",
         "instead of retiring it",
+        "adds no step, rule or scope",
     ]
     missing = [phrase for phrase in required if phrase not in text]
     assert missing == []
