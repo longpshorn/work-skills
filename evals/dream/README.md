@@ -37,8 +37,8 @@ idle window, a state folder marked already reorganized, a config with no `repos`
 and a stand-in global instructions file. `WORK_DREAM_CONFIG`, `WORK_DREAM_STATE` and `WORK_DREAM_PROJECTS`
 point at those, and the run executes `work-tools dream-run --now` (arm `baseline` adds `--skill
 evals/dream/baseline-skill.md`). Arms `skill` and `baseline` run both stages on the eval model; arm
-`skill-sonnet` runs the extract stage on the shipped extract model (`sonnet`) and the reviewer on the eval
-model, so the configuration that runs nightly is measured too.
+`skill-sonnet` runs the extract stage on `sonnet` and the reviewer on the eval model. It's a comparison arm for
+the cheaper extract model; the shipped default is `opus`, which arm `skill` measures.
 
 The run executes exactly the command that ships: both stages pass `--setting-sources project,local`, so
 user settings, plugins and hooks (including the owner's `env` block and allow rules) are not read; `WORK_STORE` and every secret-shaped variable except `ANTHROPIC_*` and `CLAUDE_*`

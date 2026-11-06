@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "work" / "scripts"))
 
 import dream  # noqa: E402
 
-SHIPPED_EXTRACT = dream.DEFAULTS["models"]["extract"]
+SONNET_EXTRACT = "sonnet"
 WORK_TOOLS = ROOT / "work" / "scripts" / "work-tools"
 BASELINE_SKILL = HERE / "baseline-skill.md"
 SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIAL|PRIVATE_KEY", re.IGNORECASE)
@@ -55,8 +55,8 @@ def _git(repo: Path, *args: str) -> None:
 
 
 def extract_model(arm: str, model: str) -> str:
-    """The extract stage's model: the shipped one for arm skill-sonnet, else the eval model."""
-    return SHIPPED_EXTRACT if arm == "skill-sonnet" else model
+    """The extract stage's model: Sonnet for the comparison arm skill-sonnet, else the eval model."""
+    return SONNET_EXTRACT if arm == "skill-sonnet" else model
 
 
 def prepare(scenario: str, workdir: Path, model: str, claude: str, arm: str = "skill") -> Path:

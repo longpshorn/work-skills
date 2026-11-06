@@ -6,7 +6,7 @@ Recorded before any paid run. Copy this estimate into the story that tracks the 
 
 3 scenarios x 3 arms = 9 `dream-run --now` invocations, one run each. Arms `skill` and `baseline` run both
 stages on the default eval model (`claude-opus-5-5`, the first entry of `fixtures.json` `models`). Arm
-`skill-sonnet` runs the skill exactly as it ships: the extract stage on the shipped extract model (`sonnet`)
+`skill-sonnet` is the comparison arm for the cheaper extract model: the extract stage on `sonnet`
 and the reviewer on the default eval model. Each invocation is one extract call plus one reviewer call per
 `checks.json` item. The first-run reorganization is switched off in every run (the seeded state is marked
 reorganized), so there is no third call.

@@ -98,7 +98,7 @@ Know what you are installing:
 
 - **It edits memory unattended.** Nobody reviews a run before it lands. The memory folder is its own local git repo, committed before and after each run that changes anything, and a run that fails before its memory commit is reset, so any run can be reverted. Only the changes the run lists for review (contradictions and promotions) get the second model's check; merges, the first-run reorganization and the stage's direct memory edits follow the skill and are not reviewed, and a repo rule's `match` is a plain substring of the origin URL, so make it specific.
 - **It opens merge requests (pull requests on GitHub) but never merges.** A fact about one repo can be proposed as a change to that repo's `CLAUDE.md` or `AGENTS.md`, but only for a repo you have allowed with `"promote": true`. The run pushes a branch and opens one merge request per repo for you to review; it never merges and never pushes to the default branch. A proposal is deferred when your checkout of the file differs from the branch it would land on. Facts about you go only to your global `CLAUDE.md`, which the run edits directly.
-- **Paid models run nightly on your plan.** Each run starts a Sonnet extraction stage and an Opus check per reviewed change, each with turn, time and dollar caps. A night with fewer than `min_conversations` ended conversations makes no model calls. The runs leave no session transcript, so they never appear in tomorrow's digest. The stages ignore your user settings (`--setting-sources project,local`), so your allow rules and plugins never widen what they can do.
+- **Paid models run nightly on your plan.** Each run starts an Opus extraction stage and an Opus check per reviewed change, each with turn, time and dollar caps. A night with fewer than `min_conversations` ended conversations makes no model calls. The runs leave no session transcript, so they never appear in tomorrow's digest. The stages ignore your user settings (`--setting-sources project,local`), so your allow rules and plugins never widen what they can do.
 
 The run keeps its own state (`run.log`, digests, a lock) in `~/.local/state/work-dream`. It reads transcripts in `~/.claude/projects` and never sends them anywhere but the models above.
 
@@ -125,7 +125,7 @@ To uninstall, run `launchctl bootout gui/$(id -u)/com.work.dream`, then delete `
 | Key | Meaning |
 | - | - |
 | `memory_dir`, `global_claude_md` | The memory folder, and the user-level instructions file promotions may edit. |
-| `models` | `extract` (default `sonnet`) and `check` (`opus`). |
+| `models` | `extract` (default `opus`) and `check` (`opus`). Sonnet costs about half as much per run but, in the evals, adds details the conversation doesn't support, which the check then rejects. |
 | `caps` | Index size, instruction-file length, promotions per run, `min_conversations` and `idle_hours` gates, `first_run_days` lookback, `max_digests` (the oldest conversations read per run; the rest wait for the next night), and per-stage turn, timeout and dollar limits. |
 | `schedule` | Local `hour` and `minute` (default 02:00). |
 | `repos` | Per-repo rules: `match` (a substring of the origin URL), `branch`, `commit`, `ticket`, `reviewers` and `promote`. A repo without `"promote": true` is never touched. |

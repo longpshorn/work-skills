@@ -33,7 +33,7 @@ All three skill-arm scenarios were re-run on the fixed code; the table shows tho
   - smoke run: $0.15
   - total: $1.18 notional, against the $42 estimate in COST.md
 
-## Batch B: `skill-sonnet` (the shipped extract model)
+## Batch B: `skill-sonnet` (Sonnet extract, comparison arm)
 
 Sonnet runs the extract stage and Opus the reviewer, on the fixed code (2dae605).
 
@@ -50,3 +50,7 @@ Sonnet runs the extract stage and Opus the reviewer, on the fixed code (2dae605)
 - **The difference between models:** Opus as the extract model doesn't add the inference.
 
 Batch B spend: $0.20 notional, against the $21 estimate.
+
+## Decision
+
+The owner chose Opus for the extract stage, so it's now the default. Arm `skill` (Opus for both stages, all three scenarios passing) measures the configuration that ships.

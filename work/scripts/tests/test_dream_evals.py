@@ -154,13 +154,13 @@ def test_dry_run_prints_the_plan_without_a_model(capsys, monkeypatch):
     assert all("extract=claude-opus-5-5" in line for line in runs if line not in sonnet)
 
 
-def test_skill_sonnet_arm_extracts_with_the_shipped_model_and_checks_with_the_eval_model(tmp_path):
+def test_skill_sonnet_arm_extracts_with_sonnet_and_checks_with_the_eval_model(tmp_path):
     for arm, extract in (("skill-sonnet", "sonnet"), ("skill", "claude-opus-5-5")):
         work = tmp_path / arm
         run.prepare("correction", work, "claude-opus-5-5", "/bin/claude", arm)
         config = json.loads((work / "config" / "dream.json").read_text(encoding="utf-8"))
         assert config["models"] == {"extract": extract, "check": "claude-opus-5-5"}
-    assert run.SHIPPED_EXTRACT == run.dream.DEFAULTS["models"]["extract"] == "sonnet"
+    assert run.dream.DEFAULTS["models"]["extract"] == "opus"
     assert run.command("skill-sonnet") == run.command("skill")
 
 

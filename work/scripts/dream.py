@@ -19,7 +19,7 @@ from xml.sax.saxutils import escape
 from typing import Dict, List, Optional, Tuple
 
 DEFAULTS = {
-    "models": {"extract": "sonnet", "check": "opus"},
+    "models": {"extract": "opus", "check": "opus"},
     "caps": {
         "index_lines": 150,
         "index_bytes": 18432,

@@ -5,7 +5,7 @@
   // The user-level instructions file that promotions may be added to.
   "global_claude_md": "~/.claude/CLAUDE.md",
   // Models for the extraction stage and for each verification check.
-  "models": {"extract": "sonnet", "check": "opus"},
+  "models": {"extract": "opus", "check": "opus"},
   // Limits: index size, instruction-file length, promotions per run, gates, and turn budgets.
   "caps": {
     "index_lines": 150,
