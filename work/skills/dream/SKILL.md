@@ -5,7 +5,7 @@ description: The nightly dream run - consolidate the auto-memory folder from dig
 
 # Dream: nightly memory consolidation
 
-Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. When `CLAUDE_PLUGIN_ROOT` is unset (the headless run), the helper is `sh "<this file's folder>/../../scripts/work-tools"`.
+Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. When the headless run leaves that path empty, the helper is `sh "<this file's folder>/../../scripts/work-tools"`.
 
 The memory folder holds one-fact Markdown files and a `MEMORY.md` index that every future session loads. The reader is a future Claude session: success is a session that starts with what matters already in context and nothing in context that is wrong. Prefer leaving a memory alone to changing it on thin evidence.
 
