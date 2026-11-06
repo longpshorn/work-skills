@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "valid_tree",
+    "old_retired",
+    "superseded_by_new",
+    "new_memory_sourced",
+    "old_index_gone",
+    "opus_check_ran"
+  ],
+  "session": "contradiction-s1",
+  "user_uuid": "dep-u2",
+  "old_memory": "deploys-from-main.md",
+  "new_words": [
+    "release"
+  ]
+}

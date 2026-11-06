@@ -1,0 +1,1 @@
+Update the memory folder from the conversation digests: save what is worth remembering for future sessions as Markdown files in the memory folder, add a line for each to MEMORY.md, and write [] to checks.json.

@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
+import dream
+
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 ARCHIVED_STATUS = "deprecated"
 REQUIRED = ("title", "state", "next", "updated")
@@ -834,6 +836,7 @@ def build_parser():
     mode.add_argument("--update", action="store_true", help="pull the clone, then re-render every installed copy")
     mode.add_argument("--uninstall", action="store_true")
     installer.add_argument("--no-pull", action="store_true", help="with --update: re-render without pulling")
+    dream.add_parsers(sub)
     return parser, sub
 
 
@@ -852,6 +855,8 @@ def main(argv=None):
             print(str(error), file=sys.stderr)
             return 1
         return 0
+    if args.cmd.startswith("dream-"):
+        return dream.run_command(args)
     raw = os.environ.get("WORK_STORE")
     if raw and not os.path.isabs(os.path.expanduser(raw)):
         print(f"work.py: WORK_STORE must be an absolute path (or start with ~), not {raw!r}", file=sys.stderr)

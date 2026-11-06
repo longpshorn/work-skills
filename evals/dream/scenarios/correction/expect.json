@@ -1,0 +1,18 @@
+{
+  "checks": [
+    "valid_tree",
+    "one_feedback_memory",
+    "rule_stated",
+    "cites_user_turn",
+    "quotes_user",
+    "indexed"
+  ],
+  "session": "correction-s1",
+  "user_uuid": "corr-u2",
+  "rule_words": [
+    "mock"
+  ],
+  "quote_words": [
+    "migration failed"
+  ]
+}

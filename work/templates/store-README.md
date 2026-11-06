@@ -48,5 +48,5 @@ How the header maps to OKF:
 
 The `work` plugin (`work@work-skills`, from https://github.com/longpshorn/work-skills).
 
-Skills: `/work:new`, `/work:resume`, `/work:checkpoint`, `/work:wrap`, `/work:standup`.
-The store is `~/.work` unless `WORK_STORE` names another folder.
+Skills: `/work:new`, `/work:resume`, `/work:checkpoint`, `/work:wrap`, `/work:standup`, `/work:dream`.
+The store is `~/.work` unless `WORK_STORE` names another folder. `/work:dream` keeps Claude's auto-memory folder, which is separate from this store.
