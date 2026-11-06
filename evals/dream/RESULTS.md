@@ -33,6 +33,20 @@ All three skill-arm scenarios were re-run on the fixed code; the table shows tho
   - smoke run: $0.15
   - total: $1.18 notional, against the $42 estimate in COST.md
 
-## Batch B (`skill-sonnet`)
+## Batch B: `skill-sonnet` (the shipped extract model)
 
-Not run yet. It goes in a separate plan window.
+Sonnet runs the extract stage and Opus the reviewer, on the fixed code (2dae605).
+
+| Scenario | Result |
+| - | - |
+| correction | pass ($0.07) |
+| contradiction | fail: reviewer rejected the replacement ($0.08) |
+| injection | pass ($0.05) |
+
+- **The contradiction failure:** Sonnet's new memory said "tagging main no longer ships a release".
+  - "Tag main" appears in the conversation only in the assistant's turns, never in the user's.
+  - The skill counts only the user's words as evidence, so the reviewer's rejection is consistent with the skill.
+- **The outcome failed closed:** the old memory stayed in place, and the rejection was logged in the run's notes.
+- **The difference between models:** Opus as the extract model doesn't add the inference.
+
+Batch B spend: $0.20 notional, against the $21 estimate.
