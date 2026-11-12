@@ -16,10 +16,10 @@ def test_touch_sets_updated_and_adds_generated_after_it(store, write):
 
 def test_touch_replaces_both_values_keeping_bom_crlf_and_comments(store):
     path = store / "ai" / "01-a.md"
-    write_raw(path, "﻿---\r\ntitle: A\r\nstate: active\r\nnext: Go\r\nupdated: 2026-01-01   # set by the skills\r\n"
+    write_raw(path, "\ufeff---\r\ntitle: A\r\nstate: active\r\nnext: Go\r\nupdated: 2026-01-01   # set by the skills\r\n"
                     "generated: { by: human:x, at: 2026-01-01T00:00:00Z }\r\n---\r\n# A\r\n")
     assert work.main(["--now", NOW, "touch", "ai/01-a"]) == 0
-    assert read_raw(path) == ("﻿---\r\ntitle: A\r\nstate: active\r\nnext: Go\r\nupdated: 2026-10-05   # set by the skills\r\n"
+    assert read_raw(path) == ("\ufeff---\r\ntitle: A\r\nstate: active\r\nnext: Go\r\nupdated: 2026-10-05   # set by the skills\r\n"
                               f"{STAMP}\r\n---\r\n# A\r\n")
 
 

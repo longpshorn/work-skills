@@ -50,7 +50,7 @@ def test_safe_path_refuses_unprintable_segments_before_resolving(tmp_path, monke
 
     real_resolve = type(root).resolve
     monkeypatch.setattr(type(root), "resolve", windows_resolve)
-    for rel in ("a\x0bb.md", "a‮b.md", "d\x85/x.md"):
+    for rel in ("a\x0bb.md", "a\u202eb.md", "d\x85/x.md"):
         with pytest.raises(dream.UnsafePath):
             dream.safe_path(root, rel)
 

@@ -95,7 +95,7 @@ def parse_generated(value):
 
 
 def parse_header(text):
-    lines = text.lstrip("﻿").splitlines()
+    lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         raise HeaderError("missing front-matter")
     end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
@@ -283,7 +283,7 @@ def upgraded(text, kind, archived=False):
     """TEXT with the OKF type for KIND added, a legacy status key renamed to state, an AREA.md's
     **Purpose:** line copied to its description and, when ARCHIVED, a workstream's missing OKF status
     set to ARCHIVED_STATUS; nothing else changes."""
-    bom = "﻿" if text.startswith("﻿") else ""
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
     if not lines or lines[0].strip() != "---":
@@ -319,7 +319,7 @@ def with_value(line, value):
 
 def stamped(text, now):
     """TEXT with updated set to NOW's date and generated to { by: ACTOR, at: NOW }; nothing else changes."""
-    bom = "﻿" if text.startswith("﻿") else ""
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     block = front_matter(lines)
     if block is None:

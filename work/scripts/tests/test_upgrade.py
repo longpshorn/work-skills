@@ -17,10 +17,10 @@ def write_raw(path, text):
 
 def test_index_adds_type_and_renames_legacy_status_keeping_bom_crlf_and_comments(store):
     path = store / "ai" / "01-a.md"
-    write_raw(path, "﻿---\r\ntitle: A\r\nstatus: active   # idea | active\r\n"
+    write_raw(path, "\ufeff---\r\ntitle: A\r\nstatus: active   # idea | active\r\n"
                     "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
     work.main(["index"])
-    assert read_raw(path) == ("﻿---\r\ntype: workstream\r\ntitle: A\r\nstate: active   # idea | active\r\n"
+    assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: A\r\nstate: active   # idea | active\r\n"
                               "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
 
 
@@ -83,10 +83,10 @@ def test_yaml_scalar_quotes_only_what_plain_yaml_would_misread():
 
 def test_index_marks_an_archived_workstream_deprecated_inserting_one_line(store):
     path = store / "_archive" / "ai" / "01-old.md"
-    write_raw(path, "﻿---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
+    write_raw(path, "\ufeff---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
                     "next: None\r\nupdated: 2026-10-01\r\n---\r\n# Old\r\n")
     work.main(["index"])
-    assert read_raw(path) == ("﻿---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
+    assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
                               f"status: {work.ARCHIVED_STATUS}\r\n"
                               "next: None\r\nupdated: 2026-10-01\r\n---\r\n# Old\r\n")
 

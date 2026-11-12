@@ -47,7 +47,7 @@ def test_log_reads_bom_and_crlf_status_files(store):
     path = store / "ai" / "01-b.md"
     path.parent.mkdir()
     with open(path, "w", encoding="utf-8", newline="") as f:
-        f.write("﻿" + with_log("- 2026-10-02 · windows").replace("\n", "\r\n"))
+        f.write("\ufeff" + with_log("- 2026-10-02 · windows").replace("\n", "\r\n"))
     assert "* [T](ai/01-b.md): windows\n" in log_text(store)
 
 

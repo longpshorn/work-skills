@@ -53,7 +53,7 @@ def test_quoted_values_are_unquoted():
 
 
 def test_bom_and_crlf_are_accepted():
-    meta = work.parse_header("﻿" + header().replace("\n", "\r\n"))
+    meta = work.parse_header("\ufeff" + header().replace("\n", "\r\n"))
     assert meta["title"] == "T"
 
 
