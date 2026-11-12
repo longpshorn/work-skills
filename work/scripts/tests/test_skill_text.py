@@ -46,6 +46,7 @@ def test_standup_offers_missing_descriptions_with_approval():
     assert "Read-only apart from" in frontmatter and "approve" in frontmatter
     step = next(line for line in text.splitlines() if "work-tools list --no-description" in line)
     for part in ("/work:checkpoint", "step 2", "Claude Code: `AskUserQuestion`", "elsewhere",
-                 "work-tools index", 'commit -m "standup: describe', "nothing is written"):
+                 "at most 4 options", "more than 4", "work-tools index", "already listed in step 1",
+                 'commit -m "standup: describe', "nothing is written"):
         assert part in step, part
     assert "work-tools touch" not in step, "touch would reset a stale workstream's age"
