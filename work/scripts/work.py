@@ -573,7 +573,10 @@ def has_git_identity(root):
 # placeholder becomes the clone's absolute plugin root, and each skill is named <plugin>-<skill> so generic names
 # (new, resume) can't collide. A marker file in each copy records what wrote it, so only those copies are ever
 # replaced or removed, and --update finds them again. This mirrors herdr-skills#30, which also reads the marker to find
-# this plugin's launcher: keep the names, the marker and its fields identical.
+# this plugin's launcher: keep the names, the marker and its fields identical. The hardening is herdr-skills#33's, as
+# merged in adlc-skills' skills.py: symlinked entries are refused with a clear error, each copy is rendered into a
+# temporary folder and renamed into place, only folders both marked for the plugin and named <plugin>-* are ever
+# removed, --update looks for installed copies before it pulls, and the plugin root must be tracked by its clone.
 
 class InstallError(Exception):
     pass
