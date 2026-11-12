@@ -1,0 +1,3 @@
+{
+  "check_command": "python3 -m pytest work/scripts/tests -q"
+}
