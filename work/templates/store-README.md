@@ -36,7 +36,7 @@ The store is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/k
 
 How the header maps to OKF:
 
-- `type`, `title`, `description`: OKF's own fields. `description` is one sentence; `index.md` entries start with it. `work-tools index` copies an `AREA.md`'s `**Purpose:**` line into a missing `description`; a workstream without one gets it at its next `/work:checkpoint`.
+- `type`, `title`, `description`: OKF's own fields. `description` is one sentence; `index.md` entries start with it. `work-tools index` copies an `AREA.md`'s `**Purpose:**` line into a missing `description`; a workstream without one gets it at its next `/work:checkpoint`, or when you approve the draft `/work:standup` offers.
 - `generated`: OKF's record of the content's last meaningful change. `by` is always `process:work-tools`; `at` is a datetime with a UTC offset.
 - `state`: the work state. OKF reserves `status` for its lifecycle values (`draft`, `stable`, `deprecated`); a file without `status` counts as `stable`.
 - `status`: `work-tools index` gives each workstream under `_archive/` that has none the value `ARCHIVED_STATUS` from `work.py` (`deprecated`: kept for history, no longer current). It never sets one on a live workstream and never changes a `status` you wrote. Moving a file back out of `_archive/`? Delete its `status` line.
