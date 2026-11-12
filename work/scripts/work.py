@@ -28,6 +28,7 @@ LOG = "log.md"
 RESERVED = (INDEX, LOG)
 OKF_VERSION = "0.2"
 STALE_DAYS = 14
+OUT_OF_RANGE = (ValueError, OverflowError, OSError)  # what datetime raises for a date the local calendar can't hold
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
 LEGACY_UPGRADE = ("this store predates the OKF format; upgrade it once by running `work-tools index` "
@@ -145,7 +146,10 @@ def parse_header(text):
     if meta.get("generated"):
         meta["generated"] = parse_generated(meta["generated"])
     if "at" in (meta.get("generated") or {}):
-        meta["date"] = local_date(meta["generated"]["at"])
+        try:
+            meta["date"] = local_date(meta["generated"]["at"])
+        except OUT_OF_RANGE:
+            raise HeaderError(f"bad generated at {meta['generated']['at'].isoformat()!r}") from None
     elif meta.get("generated") and not meta.get("updated"):
         raise HeaderError("generated has no at")
     else:
@@ -282,19 +286,20 @@ def front_matter(lines):
 
 def backfill(line):
     """LINE, a workstream's 'updated: YYYY-MM-DD' line, as its OKF generated line stamped at local noon
-    on that date (so the date reads back the same in any zone within 12 hours); None if the date is bad."""
+    on that date (so the date reads back the same in any zone within 12 hours); None if the date is bad
+    or the local calendar can't hold it."""
     try:
         day = dt.date.fromisoformat(unquote(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip()))
-    except ValueError:
+        at = dt.datetime.combine(day, dt.time(12)).astimezone()
+    except OUT_OF_RANGE:
         return None
-    at = dt.datetime.combine(day, dt.time(12)).astimezone()
     return with_value(line, generated_value(at), "generated")
 
 
 def has_at(line):
     """Whether LINE, a 'generated: ...' header line, holds a valid generated value with an at."""
     try:
-        return "at" in parse_generated(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip())
+        return "at" in parse_generated(unquote(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip()))
     except HeaderError:
         return False
 

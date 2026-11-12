@@ -188,3 +188,17 @@ def test_index_keeps_updated_when_generated_has_no_usable_at(store, write, gener
     before = path.read_text(encoding="utf-8")
     work.main(["index"])
     assert path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("day", ["0001-01-01", "9999-12-31"])
+def test_index_keeps_working_with_an_updated_date_at_the_calendar_edge(store, write, day):
+    path = write("ai/01-a", header(type="workstream", generated=None, updated=day))
+    assert work.main(["index"]) == 0
+    assert str(work.parse_header(path.read_text(encoding="utf-8"))["date"]) == day
+
+
+def test_index_drops_updated_next_to_a_quoted_generated(store, write):
+    quoted = f'"{stamp("2026-10-01")}"'
+    path = write("ai/01-a", header(type="workstream", generated=quoted, updated="2026-09-14"))
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == header(type="workstream", generated=quoted)

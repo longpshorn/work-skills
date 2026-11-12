@@ -184,6 +184,13 @@ def test_generated_accepts_z_and_a_trailing_comment():
     assert meta["generated"]["at"] == dt.datetime(2026, 10, 1, 9, 30, tzinfo=dt.timezone.utc)
 
 
+def test_a_generated_at_outside_the_local_calendar_is_a_header_error(store, write):
+    write("ai/01-a", header(generated="{ by: a, at: 0001-01-01T00:00:00+23:59 }"))
+    with pytest.raises(work.HeaderError, match="bad generated"):
+        work.parse_header(header(generated="{ by: a, at: 0001-01-01T00:00:00+23:59 }"))
+    assert work.main(["index"]) == 1
+
+
 @pytest.mark.parametrize("value", [
     "2026-10-01T09:30:00Z",
     "{ at: 2026-10-01T09:30:00Z }",
