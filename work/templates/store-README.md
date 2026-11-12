@@ -21,7 +21,6 @@ Private working notes for every tracked workstream on this machine. Local git on
     description: <one sentence: what this workstream delivers>
     state: active         # idea | scoped | active | blocked | review | done
     next: <the single next step>
-    updated: YYYY-MM-DD   # set by work-tools touch
     generated: { by: process:work-tools, at: YYYY-MM-DDThh:mm:ss+hh:mm }   # set by work-tools touch
     repos: [~/code/...]   # optional; drift checks these
     artifacts: []         # optional claude.ai URLs
@@ -37,10 +36,10 @@ The store is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/k
 How the header maps to OKF:
 
 - `type`, `title`, `description`: OKF's own fields. `description` is one sentence; `index.md` entries start with it. `work-tools index` copies an `AREA.md`'s `**Purpose:**` line into a missing `description`; a workstream without one gets it at its next `/work:checkpoint`, or when you approve the draft `/work:standup` offers.
-- `generated`: OKF's record of the content's last meaningful change. `by` is always `process:work-tools`; `at` is a datetime with a UTC offset.
+- `generated`: OKF's record of the content's last meaningful change, and the header's one date field. `by` is always `process:work-tools`; `at` is a datetime with a UTC offset. Drift, staleness and `index.md` read the local date of `at`. `work-tools touch <area>/<slug>` writes it, so never edit it by hand. A file from before `generated` that has an `updated: YYYY-MM-DD` line keeps working: `work-tools index` replaces that line with `generated` stamped at local noon on that date, and drops `updated` from a file that has both.
 - `state`: the work state. OKF reserves `status` for its lifecycle values (`draft`, `stable`, `deprecated`); a file without `status` counts as `stable`.
 - `status`: `work-tools index` gives each workstream under `_archive/` that has none the value `ARCHIVED_STATUS` from `work.py` (`deprecated`: kept for history, no longer current). It never sets one on a live workstream and never changes a `status` you wrote. Moving a file back out of `_archive/`? Delete its `status` line.
-- `next`, `updated`, `repos`, `artifacts`, `report`: extensions. `updated` is the local date of `generated.at`; drift, staleness and `index.md` read it. `work-tools touch <area>/<slug>` writes both, so never edit either by hand. A file from before `generated` keeps working with `updated` alone.
+- `next`, `repos`, `artifacts`, `report`: extensions.
 - `## Log`: each workstream's history stays in its own file. `work-tools index` gathers every Log line, archived and `report: false` workstreams included, into the store-root `log.md`, OKF's update history; a line not in the `- YYYY-MM-DD · <fact>` form is left out.
 - `index.md`: OKF's navigation file, at the store root only.
 
