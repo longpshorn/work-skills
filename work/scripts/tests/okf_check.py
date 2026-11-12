@@ -14,7 +14,7 @@ DATE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 
 def split(text):
     """(frontmatter dict or None, body lines); raises ValueError when a block is malformed."""
-    lines = text.lstrip("﻿").splitlines()
+    lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         return None, lines
     end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
