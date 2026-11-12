@@ -4,6 +4,7 @@ import re
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,25 @@ description: Save progress. Use for "/work:checkpoint".
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below.
 """
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), "-c", "user.name=T", "-c", "user.email=t@example.com",
+                    "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", *args],
+                   check=True, capture_output=True)
+
+
+def _mark(folder, data):
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, work.SKILLS_MARKER), "w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+
+
+def _symlink(target, link, directory=True):
+    try:
+        os.symlink(target, link, target_is_directory=directory)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip("this OS won't create a symlink here: %s" % error)
 
 
 def render(root="/home/u/work-skills/work"):
@@ -143,6 +163,16 @@ def test_leaves_other_plugins_skills_alone(dest):
     assert os.listdir(dest) == ["herdr-status"]
 
 
+def test_a_folder_marked_work_but_not_named_work_is_never_removed(dest):
+    other = os.path.join(dest, "checkpoint")
+    _mark(other, {"plugin": "work", "skill": "checkpoint"})
+    install(dest)
+    assert work.plugin_copies(dest, "work").keys() == {"work-" + s for s in SKILLS}
+    work.uninstall_skills(dest)
+    assert os.listdir(dest) == ["checkpoint"]
+    assert os.path.isfile(os.path.join(other, work.SKILLS_MARKER))
+
+
 def test_uninstall_removes_only_its_own_copies(dest):
     install(dest)
     Path(dest, "work-mine").mkdir()
@@ -161,6 +191,123 @@ def test_gemini_gets_a_note_about_agents_md_and_nothing_is_written_for_it(dest, 
     result = install(dest, tool="gemini")
     assert any("AGENTS.md" in note and "settings.json" in note for note in result["notes"])
     assert sorted(os.listdir(tmp_path)) == ["skills"]
+
+
+# ---- hardening: symlinks --------------------------------------------------------------------------------------------
+
+def test_refuses_a_symlinked_copy_and_touches_nothing(dest, tmp_path):
+    outside = str(tmp_path / "outside")
+    _mark(outside, {"plugin": "work", "skill": "new"})
+    os.makedirs(dest)
+    _symlink(outside, os.path.join(dest, "work-new"))
+    for action in (lambda: install(dest), lambda: work.uninstall_skills(dest)):
+        with pytest.raises(work.InstallError) as caught:
+            action()
+        assert "symlink" in str(caught.value) and "work-new" in str(caught.value)
+        assert os.listdir(dest) == ["work-new"]
+        assert os.path.isfile(os.path.join(outside, work.SKILLS_MARKER))
+
+
+def test_refuses_a_symlink_to_a_work_copy_under_another_name(dest, tmp_path):
+    outside = str(tmp_path / "outside")
+    _mark(outside, {"plugin": "work", "skill": "new"})
+    os.makedirs(dest)
+    _symlink(outside, os.path.join(dest, "linked"))
+    with pytest.raises(work.InstallError) as caught:
+        work.uninstall_skills(dest)
+    assert "linked" in str(caught.value)
+    assert os.path.isfile(os.path.join(outside, work.SKILLS_MARKER))
+
+
+def test_other_symlinks_and_a_symlinked_skills_folder_are_fine(tmp_path):
+    real = str(tmp_path / "real")
+    os.makedirs(real)
+    unrelated = str(tmp_path / "unrelated")
+    os.makedirs(unrelated)
+    _symlink(unrelated, os.path.join(real, "someone-else"))
+    linked = str(tmp_path / "linked")
+    _symlink(real, linked)
+    install(linked)
+    assert "work-new" in os.listdir(real)
+    work.uninstall_skills(linked)
+    assert os.listdir(real) == ["someone-else"]
+
+
+def test_refuses_a_symlink_in_the_plugin_source(tmp_path, dest):
+    root = str(tmp_path / "plugin")
+    os.makedirs(os.path.join(root, "skills", "x"))
+    with open(os.path.join(root, "skills", "x", "SKILL.md"), "w", encoding="utf-8") as handle:
+        handle.write("---\nname: x\n---\n# x\n")
+    secret = str(tmp_path / "secret.txt")
+    with open(secret, "w", encoding="utf-8") as handle:
+        handle.write("s")
+    _symlink(secret, os.path.join(root, "skills", "x", "leak.txt"), directory=False)
+    with pytest.raises(work.InstallError) as caught:
+        work.install_skills(root, dest, tool="agents", commit="c")
+    assert "symlink" in str(caught.value)
+    assert not os.path.exists(os.path.join(dest, "work-x"))
+
+
+# ---- hardening: atomic copies ---------------------------------------------------------------------------------------
+
+def test_a_failed_render_leaves_the_old_copy_marked_and_no_temporary_folder(dest, monkeypatch):
+    install(dest)
+    real = work.render_skill
+
+    def broken(text, plugin, skill, root):
+        if skill == "new":
+            raise OSError("disk full")
+        return real(text, plugin, skill, root)
+
+    monkeypatch.setattr(work, "render_skill", broken)
+    with pytest.raises(OSError):
+        install(dest)
+    assert sorted(os.listdir(dest)) == ["work-" + s for s in SKILLS]
+    assert work.skill_marker(os.path.join(dest, "work-new"))["commit"] == "abc123"
+
+
+def test_a_failed_swap_puts_the_old_copy_back(dest, monkeypatch):
+    install(dest)
+    real = os.rename
+    calls = []
+
+    def rename(src, dst):
+        calls.append((src, dst))
+        if len(calls) == 2:
+            raise OSError("busy")
+        return real(src, dst)
+
+    monkeypatch.setattr(work.os, "rename", rename)
+    with pytest.raises(OSError):
+        install(dest)
+    monkeypatch.setattr(work.os, "rename", real)
+    assert sorted(os.listdir(dest)) == ["work-" + s for s in SKILLS]
+    assert work.skill_marker(os.path.join(dest, os.path.basename(calls[0][0])))["plugin"] == "work"
+
+
+def test_leftovers_of_an_interrupted_run_are_cleared_next_time(dest):
+    install(dest)
+    leftover = os.path.join(dest, ".work-new.tmp-abc")
+    _mark(leftover, {"plugin": "work", "skill": "new"})
+    foreign = os.path.join(dest, ".work-resume.tmp-xyz")
+    os.makedirs(foreign)
+    result = install(dest)
+    assert ".work-new.tmp-abc" in result["removed"]
+    assert not os.path.exists(leftover)
+    assert os.path.isdir(foreign)
+
+
+def test_uninstall_also_clears_leftovers(dest):
+    install(dest)
+    _mark(os.path.join(dest, ".work-new.tmp-abc"), {"plugin": "work", "skill": "new"})
+    assert ".work-new.tmp-abc" in work.uninstall_skills(dest)["removed"]
+    assert os.listdir(dest) == []
+
+
+def test_copies_are_lf(dest):
+    install(dest)
+    for name in ("SKILL.md", work.SKILLS_MARKER):
+        assert b"\r\n" not in Path(dest, "work-new", name).read_bytes()
 
 
 def hook_note(result, path):
@@ -256,12 +403,86 @@ def test_refuses_a_root_outside_a_git_checkout(tmp_path):
         work.plugin_commit(str(copy))
 
 
+def test_update_checks_for_copies_before_it_pulls(dest, monkeypatch, capsys):
+    def pull(plugin_root):
+        raise AssertionError("pulled before checking for copies")
+
+    monkeypatch.setattr(work, "pull_plugin", pull)
+    assert work.main(["install-skills", "--update", "--dest", dest]) == 1
+    assert "install them first" in capsys.readouterr().err
+
+
+def test_refuses_an_untracked_folder_inside_some_other_git_repo(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _git(home, "init", "-q")
+    (home / "README").write_text("dotfiles\n", encoding="utf-8")
+    _git(home, "add", "README")
+    _git(home, "commit", "-q", "-m", "init")
+    cache = home / "cache" / "work"
+    shutil.copytree(Path(PLUGIN_ROOT) / "skills", cache / "skills")
+    with pytest.raises(work.InstallError, match="clone"):
+        work.plugin_commit(str(cache))
+
+
 def test_update_refuses_a_clone_with_local_changes(tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "init", "-q", str(clone)], check=True)
     (clone / "dirty.txt").write_text("x")
     with pytest.raises(work.InstallError, match="local changes"):
         work.pull_plugin(str(clone))
+
+
+def _plugin_clone(tmp_path):
+    """An upstream repo holding a copy of this plugin, and a clone of it: (upstream, clone's plugin root)."""
+    upstream = tmp_path / "upstream"
+    ignore = shutil.ignore_patterns("tests", "__pycache__", "*.pyc", ".pytest_cache")
+    shutil.copytree(PLUGIN_ROOT, str(upstream / "work"), ignore=ignore)
+    shutil.copy(os.path.join(os.path.dirname(PLUGIN_ROOT), ".gitignore"), str(upstream / ".gitignore"))
+    _git(tmp_path, "init", "-q", "-b", "main", str(upstream))
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "init")
+    _git(tmp_path, "clone", "-q", str(upstream), str(tmp_path / "clone"))
+    return upstream, str(tmp_path / "clone" / "work")
+
+
+def _tools(root, *args):
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    return subprocess.run([sys.executable, os.path.join(root, "scripts", "work.py"), *args],
+                          capture_output=True, text=True, encoding="utf-8", env=env)
+
+
+def test_pull_fast_forwards_a_clean_clone(tmp_path):
+    upstream, root = _plugin_clone(tmp_path)
+    (upstream / "work" / "NEW.md").write_text("new\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "new")
+    work.pull_plugin(root)
+    assert os.path.isfile(os.path.join(root, "NEW.md"))
+
+
+def test_update_pulls_then_re_renders_with_the_pulled_code(tmp_path):
+    upstream, root = _plugin_clone(tmp_path)
+    dest = str(tmp_path / "skills")
+    done = _tools(root, "install-skills", "--dest", dest)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["dest"] == dest
+    extra = upstream / "work" / "skills" / "extra"
+    extra.mkdir()
+    (extra / "SKILL.md").write_text("---\nname: extra\ndescription: d\n---\n\n# Extra\n\nRun `${CLAUDE_PLUGIN_ROOT}`.\n",
+                                    encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "extra")
+    head = subprocess.run(["git", "-C", str(upstream), "rev-parse", "HEAD"], capture_output=True,
+                          text=True).stdout.strip()
+    done = _tools(root, "install-skills", "--update", "--dest", dest)
+    assert done.returncode == 0, done.stderr
+    result = json.loads(done.stdout)
+    assert result["pulled"] is not None
+    assert "work-extra" in result["refreshed"][0]["installed"]
+    assert work.skill_marker(os.path.join(dest, "work-extra"))["commit"] == head
+    text = read(dest, "work-extra", "SKILL.md")
+    assert "name: work-extra" in text and root.replace("\\", "/") in text
 
 
 def test_the_launcher_runs_install_skills(dest):
