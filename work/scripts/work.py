@@ -613,6 +613,8 @@ NUDGE_HOOKS = {
                     "timeout": 10000}]}]}}),
 }
 NUDGE_HOOK_TOOLS = {"agents": ("codex", "gemini"), "codex": ("codex",), "gemini": ("gemini",)}
+# A copy is written to a temporary folder named like this beside its target, then renamed into place.
+TEMP_INFIX = ".tmp-"
 
 
 def skill_dirs(env=None):
@@ -665,6 +667,44 @@ def skill_marker(folder):
     return marker if isinstance(marker, dict) else None
 
 
+def _is_link(path):
+    """A symlink, or on Windows a junction (which os.path.islink doesn't report before Python 3.12)."""
+    if os.path.islink(path):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    return bool(isjunction and isjunction(path))
+
+
+def _is_temp(name, plugin):
+    return name.startswith("." + plugin + "-") and TEMP_INFIX in name
+
+
+def _refuse_links(dest, plugin):
+    """Stop, before anything is written, at a symlinked entry that is or claims to be one of plugin's copies."""
+    if not os.path.isdir(dest):
+        return
+    linked = []
+    for name in sorted(os.listdir(dest)):
+        path = os.path.join(dest, name)
+        if not _is_link(path):
+            continue
+        marker = skill_marker(path) if os.path.isdir(path) else None
+        if name.startswith(plugin + "-") or _is_temp(name, plugin) or (marker and marker.get("plugin") == plugin):
+            linked.append(name)
+    if linked:
+        raise InstallError("%s holds %s as a symlink; install-skills never writes or removes through a symlink. "
+                           "Replace it with a real folder, or remove the link, and run it again."
+                           % (dest, ", ".join(linked)))
+
+
+def _refuse_source_links(source):
+    for folder, dirs, files in os.walk(source):
+        for name in dirs + files:
+            if _is_link(os.path.join(folder, name)):
+                raise InstallError("%s is a symlink; install-skills copies only real files from the plugin." %
+                                   os.path.join(folder, name))
+
+
 def plugin_copies(dest, plugin):
     """{folder name: marker} of the copies of plugin's skills in dest."""
     if not os.path.isdir(dest):
@@ -679,9 +719,13 @@ def plugin_copies(dest, plugin):
 
 def install_skills(plugin_root, dest, tool, commit, plugin=PLUGIN_NAME, dry_run=False):
     """Write a rendered copy of each of plugin_root's skills into dest. Refuses, writing nothing, when a target folder
-    exists that this command didn't write; removes its own copies of skills the plugin no longer has."""
+    exists that this command didn't write or a copy is a symlink; removes its own copies of skills the plugin no
+    longer has."""
     skills_root = os.path.join(plugin_root, "skills")
     skills = sorted(n for n in os.listdir(skills_root) if os.path.isfile(os.path.join(skills_root, n, "SKILL.md")))
+    _refuse_links(dest, plugin)
+    for skill in skills:
+        _refuse_source_links(os.path.join(skills_root, skill))
     ours = plugin_copies(dest, plugin)
     foreign = [plugin + "-" + s for s in skills
                if os.path.exists(os.path.join(dest, plugin + "-" + s)) and plugin + "-" + s not in ours]
@@ -723,6 +767,7 @@ def install_skills(plugin_root, dest, tool, commit, plugin=PLUGIN_NAME, dry_run=
 
 def uninstall_skills(dest, plugin=PLUGIN_NAME, dry_run=False):
     """Remove plugin's copies from dest, and nothing else."""
+    _refuse_links(dest, plugin)
     removed = list(plugin_copies(dest, plugin))
     if not dry_run:
         for name in removed:

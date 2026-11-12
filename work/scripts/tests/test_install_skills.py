@@ -24,6 +24,25 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
 """
 
 
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), "-c", "user.name=T", "-c", "user.email=t@example.com",
+                    "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", *args],
+                   check=True, capture_output=True)
+
+
+def _mark(folder, data):
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, work.SKILLS_MARKER), "w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+
+
+def _symlink(target, link, directory=True):
+    try:
+        os.symlink(target, link, target_is_directory=directory)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip("this OS won't create a symlink here: %s" % error)
+
+
 def render(root="/home/u/work-skills/work"):
     return work.render_skill(SKILL_TEXT, "work", "checkpoint", root)
 
@@ -161,6 +180,61 @@ def test_gemini_gets_a_note_about_agents_md_and_nothing_is_written_for_it(dest, 
     result = install(dest, tool="gemini")
     assert any("AGENTS.md" in note and "settings.json" in note for note in result["notes"])
     assert sorted(os.listdir(tmp_path)) == ["skills"]
+
+
+# ---- hardening: symlinks --------------------------------------------------------------------------------------------
+
+def test_refuses_a_symlinked_copy_and_touches_nothing(dest, tmp_path):
+    outside = str(tmp_path / "outside")
+    _mark(outside, {"plugin": "work", "skill": "new"})
+    os.makedirs(dest)
+    _symlink(outside, os.path.join(dest, "work-new"))
+    for action in (lambda: install(dest), lambda: work.uninstall_skills(dest)):
+        with pytest.raises(work.InstallError) as caught:
+            action()
+        assert "symlink" in str(caught.value) and "work-new" in str(caught.value)
+        assert os.listdir(dest) == ["work-new"]
+        assert os.path.isfile(os.path.join(outside, work.SKILLS_MARKER))
+
+
+def test_refuses_a_symlink_to_a_work_copy_under_another_name(dest, tmp_path):
+    outside = str(tmp_path / "outside")
+    _mark(outside, {"plugin": "work", "skill": "new"})
+    os.makedirs(dest)
+    _symlink(outside, os.path.join(dest, "linked"))
+    with pytest.raises(work.InstallError) as caught:
+        work.uninstall_skills(dest)
+    assert "linked" in str(caught.value)
+    assert os.path.isfile(os.path.join(outside, work.SKILLS_MARKER))
+
+
+def test_other_symlinks_and_a_symlinked_skills_folder_are_fine(tmp_path):
+    real = str(tmp_path / "real")
+    os.makedirs(real)
+    unrelated = str(tmp_path / "unrelated")
+    os.makedirs(unrelated)
+    _symlink(unrelated, os.path.join(real, "someone-else"))
+    linked = str(tmp_path / "linked")
+    _symlink(real, linked)
+    install(linked)
+    assert "work-new" in os.listdir(real)
+    work.uninstall_skills(linked)
+    assert os.listdir(real) == ["someone-else"]
+
+
+def test_refuses_a_symlink_in_the_plugin_source(tmp_path, dest):
+    root = str(tmp_path / "plugin")
+    os.makedirs(os.path.join(root, "skills", "x"))
+    with open(os.path.join(root, "skills", "x", "SKILL.md"), "w", encoding="utf-8") as handle:
+        handle.write("---\nname: x\n---\n# x\n")
+    secret = str(tmp_path / "secret.txt")
+    with open(secret, "w", encoding="utf-8") as handle:
+        handle.write("s")
+    _symlink(secret, os.path.join(root, "skills", "x", "leak.txt"), directory=False)
+    with pytest.raises(work.InstallError) as caught:
+        work.install_skills(root, dest, tool="agents", commit="c")
+    assert "symlink" in str(caught.value)
+    assert not os.path.exists(os.path.join(dest, "work-x"))
 
 
 def hook_note(result, path):
