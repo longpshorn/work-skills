@@ -4,13 +4,13 @@ import json
 import pytest
 
 import work
-from helpers import header
+from helpers import header, stamp
 
 
 def test_parses_required_fields_and_lists():
     meta = work.parse_header(header(repos="[~/a, ~/b]", artifacts="https://x"))
     assert meta["title"] == "T" and meta["state"] == "active" and meta["next"] == "Do it"
-    assert meta["updated"] == dt.date(2026, 10, 1)
+    assert meta["date"] == dt.date(2026, 10, 1)
     assert meta["repos"] == ["~/a", "~/b"]
     assert meta["artifacts"] == ["https://x"]
 
@@ -24,7 +24,9 @@ def test_optional_lists_default_empty():
     ({"next": None}, "missing next"),
     ({"state": "doing"}, "bad state 'doing'"),
     ({"type": "area"}, "bad type 'area'"),
-    ({"updated": "Oct 1"}, "bad updated 'Oct 1'"),
+    ({"generated": None, "updated": "Oct 1"}, "bad updated 'Oct 1'"),
+    ({"generated": None}, "missing generated"),
+    ({"generated": "{ by: human:x }"}, "generated has no at"),
     ({"repos": "[~/a"}, "unterminated list"),
 ])
 def test_rejects_bad_headers(fields, message):
@@ -134,9 +136,34 @@ def test_okf_status_alone_is_missing_state():
         work.parse_header(header(state=None, status="stable"))
 
 
-def test_description_and_generated_are_optional():
-    meta = work.parse_header(header())
-    assert "description" not in meta and "generated" not in meta
+def test_description_is_optional():
+    assert "description" not in work.parse_header(header())
+
+
+def test_required_fields_name_one_date_field():
+    assert "generated" in work.REQUIRED and "updated" not in work.REQUIRED
+
+
+def test_date_is_the_local_date_of_generated_at():
+    assert work.parse_header(header(generated=stamp("2026-09-14")))["date"] == dt.date(2026, 9, 14)
+
+
+def test_date_converts_generated_at_from_its_own_offset_near_midnight():
+    local = dt.datetime(2026, 10, 6, 0, 30).astimezone()
+    at = local.astimezone(dt.timezone(local.utcoffset() - dt.timedelta(hours=6)))
+    assert at.isoformat().startswith("2026-10-05T18:30:00")
+    meta = work.parse_header(header(generated=f"{{ by: process:work-tools, at: {at.isoformat()} }}"))
+    assert meta["date"] == dt.date(2026, 10, 6)
+
+
+def test_a_header_with_only_updated_falls_back_to_it():
+    meta = work.parse_header(header(generated=None, updated="2026-09-14"))
+    assert meta["date"] == dt.date(2026, 9, 14) and "generated" not in meta
+
+
+def test_generated_wins_over_updated_when_both_are_present():
+    meta = work.parse_header(header(generated=stamp("2026-10-05"), updated="2026-01-01"))
+    assert meta["date"] == dt.date(2026, 10, 5)
 
 
 def test_parses_description_and_generated_mapping():

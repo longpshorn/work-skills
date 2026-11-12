@@ -20,7 +20,7 @@ import dream
 
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 ARCHIVED_STATUS = "deprecated"
-REQUIRED = ("title", "state", "next", "updated")
+REQUIRED = ("title", "state", "next", "generated")
 ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 INDEX = "index.md"
@@ -101,6 +101,16 @@ def parse_generated(value):
     return generated
 
 
+def generated_value(at):
+    """The header value of OKF's generated for a change work-tools made at AT, an aware datetime."""
+    return f"{{ by: {ACTOR}, at: {at.isoformat()} }}"
+
+
+def local_date(at):
+    """The reader's local date of AT, an aware datetime, whatever its own offset."""
+    return at.astimezone().date()
+
+
 def parse_header(text):
     lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
@@ -125,19 +135,23 @@ def parse_header(text):
             meta[key] = unquote(value)
     if "state" not in meta and meta.get("status") in STATES:
         raise LegacyHeaderError(f"legacy 'status: {meta['status']}' key: {LEGACY_UPGRADE}")
-    missing = [k for k in REQUIRED if not meta.get(k)]
+    missing = [k for k in REQUIRED if not meta.get(k) and not (k == "generated" and meta.get("updated"))]
     if missing:
         raise HeaderError("missing " + ", ".join(missing))
     if meta["state"] not in STATES:
         raise HeaderError(f"bad state {meta['state']!r}")
     if meta.get("type", TYPES["status file"]) != TYPES["status file"]:
         raise HeaderError(f"bad type {meta['type']!r}")
-    try:
-        meta["updated"] = dt.date.fromisoformat(meta["updated"])
-    except ValueError:
-        raise HeaderError(f"bad updated {meta['updated']!r}") from None
-    if "generated" in meta:
+    if meta.get("generated"):
         meta["generated"] = parse_generated(meta["generated"])
+        if "at" not in meta["generated"]:
+            raise HeaderError("generated has no at")
+        meta["date"] = local_date(meta["generated"]["at"])
+    else:
+        try:
+            meta["date"] = dt.date.fromisoformat(meta["updated"])
+        except ValueError:
+            raise HeaderError(f"bad updated {meta['updated']!r}") from None
     report = meta.get("report", "true")
     if report not in ("true", "false"):
         raise HeaderError(f"bad report {report!r}")
@@ -190,11 +204,11 @@ def render_index(root, items, errors, today):
             if w.area != area:
                 continue
             m = w.meta
-            age = (today - m["updated"]).days
+            age = (today - m["date"]).days
             flag = " ⚠ stale" if age >= STALE_DAYS and m["state"] != "done" else ""
             state = m["state"] if m["report"] else f"{m['state']} · off-report"
             facts = [m["description"]] if m.get("description") else []
-            facts += [state, m["next"], f"{m['updated']} ({age}d){flag}"]
+            facts += [state, m["next"], f"{m['date']} ({age}d){flag}"]
             out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {' · '.join(facts)}")
         out.append("")
     if errors:
@@ -265,9 +279,21 @@ def front_matter(lines):
     return end, keys
 
 
+def backfill(line):
+    """LINE, a workstream's 'updated: YYYY-MM-DD' line, as its OKF generated line stamped at local noon
+    on that date (so the date reads back the same in any zone within 12 hours); None if the date is bad."""
+    try:
+        day = dt.date.fromisoformat(unquote(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip()))
+    except ValueError:
+        return None
+    at = dt.datetime.combine(day, dt.time(12)).astimezone()
+    return with_value(line, generated_value(at), "generated")
+
+
 def upgraded(text, kind, archived=False):
-    """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description
-    and, when ARCHIVED, a workstream's missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
+    """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description,
+    a workstream's updated date turned into OKF generated (or dropped when generated is there) and,
+    when ARCHIVED, a workstream's missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -283,6 +309,19 @@ def upgraded(text, kind, archived=False):
         purpose = PURPOSE.search("".join(lines[end + 1:]))
         if purpose:
             lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
+    if kind == "status file" and "updated" in keys:
+        i = keys.pop("updated")
+        if "generated" in keys:
+            del lines[i]
+            end -= 1
+            keys = {k: v - (v > i) for k, v in keys.items()}
+        else:
+            backfilled = backfill(lines[i])
+            if backfilled is None:
+                keys["updated"] = i
+            else:
+                lines[i] = backfilled
+                keys["generated"] = i
     if kind == "status file" and archived and "status" not in keys:
         lines.insert(keys["state"] + 1 if "state" in keys else end, f"status: {ARCHIVED_STATUS}{newline}")
     if "type" not in keys:
@@ -290,14 +329,16 @@ def upgraded(text, kind, archived=False):
     return bom + "".join(lines)
 
 
-def with_value(line, value):
-    """LINE, a 'key: value' header line, holding VALUE instead; its comment and line ending stay."""
+def with_value(line, value, key=None):
+    """LINE, a 'key: value' header line, holding VALUE (under KEY, if given) instead; its comment and line
+    ending stay."""
     head = strip_comment(line.rstrip("\r\n"))
-    return f"{head.split(':', 1)[0]}: {value}{line[len(head):]}"
+    return f"{key or head.split(':', 1)[0]}: {value}{line[len(head):]}"
 
 
 def stamped(text, now):
-    """TEXT with updated set to NOW's date and generated to { by: ACTOR, at: NOW }; nothing else changes."""
+    """TEXT with generated set to { by: ACTOR, at: NOW } and any updated line removed (a lone updated
+    line is replaced in place); nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     block = front_matter(lines)
@@ -305,14 +346,16 @@ def stamped(text, now):
         raise HeaderError("missing front-matter")
     end, keys = block
     newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    values = {"updated": now.date().isoformat(), "generated": f"{{ by: {ACTOR}, at: {now.isoformat()} }}"}
-    for key, value in values.items():
-        if key in keys:
-            lines[keys[key]] = with_value(lines[keys[key]], value)
-        else:
-            at = keys["updated"] + 1 if "updated" in keys else end
-            lines.insert(at, f"{key}: {value}{newline}")
-            keys[key], end = at, end + 1
+    value = generated_value(now)
+    if "generated" in keys:
+        lines[keys["generated"]] = with_value(lines[keys["generated"]], value)
+        if "updated" in keys:
+            del lines[keys["updated"]]
+    elif "updated" in keys:
+        i = keys["updated"]
+        lines[i] = with_value(lines[i], value, "generated")
+    else:
+        lines.insert(end, f"generated: {value}{newline}")
     return bom + "".join(lines)
 
 
@@ -467,7 +510,7 @@ def modified(path):
 
 
 def changed_sources(w):
-    since, changed = w.meta["updated"], []
+    since, changed = w.meta["date"], []
     for match in LINK.finditer(w.path.read_text(encoding="utf-8")):
         written = match.group(1).rstrip(".,;:")
         path = Path(os.path.expanduser(written))
@@ -481,7 +524,7 @@ def changed_sources(w):
 
 def drift_lines(w):
     lines = [issue for issue in map(repo_issue, w.meta["repos"]) if issue]
-    lines += [f"changed since {w.meta['updated']}: {p}" for p in changed_sources(w)]
+    lines += [f"changed since {w.meta['date']}: {p}" for p in changed_sources(w)]
     return lines
 
 
@@ -904,11 +947,11 @@ def build_parser():
     finder = sub.add_parser("find", help="match a workstream by name, or by --cwd inside a linked repo")
     finder.add_argument("query", nargs="?")
     finder.add_argument("--cwd")
-    drifter = sub.add_parser("drift", help="uncommitted/unpushed repo work and linked files changed since 'updated'")
+    drifter = sub.add_parser("drift", help="uncommitted/unpushed repo work and linked files changed since generated.at's date")
     target = drifter.add_mutually_exclusive_group(required=True)
     target.add_argument("key", nargs="?")
     target.add_argument("--all", action="store_true")
-    toucher = sub.add_parser("touch", help="stamp a workstream's updated date and OKF generated datetime")
+    toucher = sub.add_parser("touch", help="stamp a workstream's OKF generated datetime")
     toucher.add_argument("key")
     installer = sub.add_parser("install-skills", help="install rendered skill copies for agents other than Claude Code")
     installer.add_argument("--tool", choices=sorted(SKILL_DIRS), help="install into this tool's own skills folder")

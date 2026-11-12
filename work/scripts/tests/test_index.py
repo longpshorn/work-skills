@@ -4,13 +4,13 @@ import subprocess
 import pytest
 
 import work
-from helpers import header
+from helpers import header, stamp
 
 
 def test_index_groups_by_area_and_flags_stale(store, write):
-    write("garden/01-a", header(title="Alpha", updated="2026-09-01"))
+    write("garden/01-a", header(title="Alpha", generated=stamp("2026-09-01")))
     write("ai/01-b", header(title="Beta", next="x | y"))
-    write("ai/02-c", header(title="Done one", state="done", updated="2026-01-01"))
+    write("ai/02-c", header(title="Done one", state="done", generated=stamp("2026-01-01")))
     assert work.main(["--today", "2026-10-05", "index"]) == 0
     text = (store / "index.md").read_text(encoding="utf-8")
     assert text.startswith('---\nokf_version: "0.2"\n---\n\n# ai\n')
@@ -84,7 +84,7 @@ def test_index_links_encode_markdown_specials_in_target_only(store, write):
 
 def row_for(tmp_path, area, filename, title="T"):
     meta = {"title": title, "state": "active", "next": "Do it",
-            "updated": dt.date(2026, 10, 1), "report": True}
+            "date": dt.date(2026, 10, 1), "report": True}
     item = work.Workstream(area, tmp_path / area / filename, meta)
     text = work.render_index(tmp_path, [item], [], dt.date(2026, 10, 5))
     return next(line for line in text.splitlines() if line.startswith("* ["))
