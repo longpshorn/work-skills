@@ -180,3 +180,11 @@ def test_a_store_with_only_updated_headers_conforms_after_one_index_run(store, w
     assert work.main(["--today", "2026-10-05", "index"]) == 0
     assert okf_check.problems(store) == []
     assert "2026-09-14 (21d)" in (store / "index.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("generated", ["{ by: human:x }", "", "{ by: human:x, at: 2026-10-01 }"])
+def test_index_keeps_updated_when_generated_has_no_usable_at(store, write, generated):
+    path = write("ai/01-a", header(type="workstream", updated="2026-09-14", generated=generated))
+    before = path.read_text(encoding="utf-8")
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == before

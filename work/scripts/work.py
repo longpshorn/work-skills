@@ -144,9 +144,10 @@ def parse_header(text):
         raise HeaderError(f"bad type {meta['type']!r}")
     if meta.get("generated"):
         meta["generated"] = parse_generated(meta["generated"])
-        if "at" not in meta["generated"]:
-            raise HeaderError("generated has no at")
+    if "at" in (meta.get("generated") or {}):
         meta["date"] = local_date(meta["generated"]["at"])
+    elif meta.get("generated") and not meta.get("updated"):
+        raise HeaderError("generated has no at")
     else:
         try:
             meta["date"] = dt.date.fromisoformat(meta["updated"])
@@ -290,10 +291,19 @@ def backfill(line):
     return with_value(line, generated_value(at), "generated")
 
 
+def has_at(line):
+    """Whether LINE, a 'generated: ...' header line, holds a valid generated value with an at."""
+    try:
+        return "at" in parse_generated(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip())
+    except HeaderError:
+        return False
+
+
 def upgraded(text, kind, archived=False):
     """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description,
-    a workstream's updated date turned into OKF generated (or dropped when generated is there) and,
-    when ARCHIVED, a workstream's missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
+    a workstream's updated date turned into OKF generated (or dropped when a generated with an at is
+    there; kept as the only date otherwise) and, when ARCHIVED, a workstream's missing OKF status set
+    to ARCHIVED_STATUS; nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -310,18 +320,17 @@ def upgraded(text, kind, archived=False):
         if purpose:
             lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
     if kind == "status file" and "updated" in keys:
-        i = keys.pop("updated")
-        if "generated" in keys:
+        i = keys["updated"]
+        if "generated" not in keys:
+            backfilled = backfill(lines[i])
+            if backfilled is not None:
+                lines[i] = backfilled
+                keys["generated"] = keys.pop("updated")
+        elif has_at(lines[keys["generated"]]):
             del lines[i]
             end -= 1
+            del keys["updated"]
             keys = {k: v - (v > i) for k, v in keys.items()}
-        else:
-            backfilled = backfill(lines[i])
-            if backfilled is None:
-                keys["updated"] = i
-            else:
-                lines[i] = backfilled
-                keys["generated"] = i
     if kind == "status file" and archived and "status" not in keys:
         lines.insert(keys["state"] + 1 if "state" in keys else end, f"status: {ARCHIVED_STATUS}{newline}")
     if "type" not in keys:

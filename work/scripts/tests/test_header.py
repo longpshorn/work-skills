@@ -161,6 +161,11 @@ def test_a_header_with_only_updated_falls_back_to_it():
     assert meta["date"] == dt.date(2026, 9, 14) and "generated" not in meta
 
 
+@pytest.mark.parametrize("generated", ["{ by: human:x }", ""])
+def test_updated_is_the_fallback_when_generated_has_no_at(generated):
+    assert work.parse_header(header(generated=generated, updated="2026-09-14"))["date"] == dt.date(2026, 9, 14)
+
+
 def test_generated_wins_over_updated_when_both_are_present():
     meta = work.parse_header(header(generated=stamp("2026-10-05"), updated="2026-01-01"))
     assert meta["date"] == dt.date(2026, 10, 5)
