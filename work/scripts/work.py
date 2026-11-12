@@ -393,7 +393,10 @@ def cmd_index(root, args):
 def cmd_list(root, args):
     items, _ = load_store(root)
     for w in items:
-        print(f"{w.key} · {w.meta['state']} · {w.meta['next']}")
+        if not args.no_description:
+            print(f"{w.key} · {w.meta['state']} · {w.meta['next']}")
+        elif not w.meta.get("description"):
+            print(w.key)
     return 0
 
 
@@ -818,7 +821,9 @@ def build_parser():
     sub.add_parser("root", help="print the store's path, whether or not it exists")
     sub.add_parser("init", help="create the store (git on branch log, no remote) unless it exists")
     sub.add_parser("index", help="regenerate index.md and log.md and add missing OKF types; exit 1 on header errors")
-    sub.add_parser("list", help="one line per workstream")
+    lister = sub.add_parser("list", help="one line per workstream")
+    lister.add_argument("--no-description", action="store_true",
+                        help="only the keys of workstreams with no description, for /work:standup to offer one")
     finder = sub.add_parser("find", help="match a workstream by name, or by --cwd inside a linked repo")
     finder.add_argument("query", nargs="?")
     finder.add_argument("--cwd")
