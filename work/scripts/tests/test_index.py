@@ -37,6 +37,21 @@ def test_list_prints_one_line_each(store, write, capsys):
     assert capsys.readouterr().out == "ai/01-b · blocked · Wait for data\nai/02-c · active · Ship\n"
 
 
+def test_list_no_description_prints_only_keys_without_one(store, write, capsys):
+    write("ai/01-b", header(description="Ships the export."))
+    write("ai/02-c", header())
+    write("ai/03-d", header(description='""'))
+    write("_archive/ai/04-e", header())
+    assert work.main(["list", "--no-description"]) == 0
+    assert capsys.readouterr().out == "ai/02-c\nai/03-d\n"
+
+
+def test_list_no_description_prints_nothing_when_all_have_one(store, write, capsys):
+    write("ai/01-b", header(description="Ships the export."))
+    assert work.main(["list", "--no-description"]) == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_missing_store_is_a_clear_error(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("WORK_STORE", str(tmp_path / "nope"))
     for command in ("index", "list"):
