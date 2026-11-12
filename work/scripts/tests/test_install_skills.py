@@ -162,6 +162,16 @@ def test_leaves_other_plugins_skills_alone(dest):
     assert os.listdir(dest) == ["herdr-status"]
 
 
+def test_a_folder_marked_work_but_not_named_work_is_never_removed(dest):
+    other = os.path.join(dest, "checkpoint")
+    _mark(other, {"plugin": "work", "skill": "checkpoint"})
+    install(dest)
+    assert work.plugin_copies(dest, "work").keys() == {"work-" + s for s in SKILLS}
+    work.uninstall_skills(dest)
+    assert os.listdir(dest) == ["checkpoint"]
+    assert os.path.isfile(os.path.join(other, work.SKILLS_MARKER))
+
+
 def test_uninstall_removes_only_its_own_copies(dest):
     install(dest)
     Path(dest, "work-mine").mkdir()
@@ -235,6 +245,68 @@ def test_refuses_a_symlink_in_the_plugin_source(tmp_path, dest):
         work.install_skills(root, dest, tool="agents", commit="c")
     assert "symlink" in str(caught.value)
     assert not os.path.exists(os.path.join(dest, "work-x"))
+
+
+# ---- hardening: atomic copies ---------------------------------------------------------------------------------------
+
+def test_a_failed_render_leaves_the_old_copy_marked_and_no_temporary_folder(dest, monkeypatch):
+    install(dest)
+    real = work.render_skill
+
+    def broken(text, plugin, skill, root):
+        if skill == "new":
+            raise OSError("disk full")
+        return real(text, plugin, skill, root)
+
+    monkeypatch.setattr(work, "render_skill", broken)
+    with pytest.raises(OSError):
+        install(dest)
+    assert sorted(os.listdir(dest)) == ["work-" + s for s in SKILLS]
+    assert work.skill_marker(os.path.join(dest, "work-new"))["commit"] == "abc123"
+
+
+def test_a_failed_swap_puts_the_old_copy_back(dest, monkeypatch):
+    install(dest)
+    real = os.rename
+    calls = []
+
+    def rename(src, dst):
+        calls.append((src, dst))
+        if len(calls) == 2:
+            raise OSError("busy")
+        return real(src, dst)
+
+    monkeypatch.setattr(work.os, "rename", rename)
+    with pytest.raises(OSError):
+        install(dest)
+    monkeypatch.setattr(work.os, "rename", real)
+    assert sorted(os.listdir(dest)) == ["work-" + s for s in SKILLS]
+    assert work.skill_marker(os.path.join(dest, os.path.basename(calls[0][0])))["plugin"] == "work"
+
+
+def test_leftovers_of_an_interrupted_run_are_cleared_next_time(dest):
+    install(dest)
+    leftover = os.path.join(dest, ".work-new.tmp-abc")
+    _mark(leftover, {"plugin": "work", "skill": "new"})
+    foreign = os.path.join(dest, ".work-resume.tmp-xyz")
+    os.makedirs(foreign)
+    result = install(dest)
+    assert ".work-new.tmp-abc" in result["removed"]
+    assert not os.path.exists(leftover)
+    assert os.path.isdir(foreign)
+
+
+def test_uninstall_also_clears_leftovers(dest):
+    install(dest)
+    _mark(os.path.join(dest, ".work-new.tmp-abc"), {"plugin": "work", "skill": "new"})
+    assert ".work-new.tmp-abc" in work.uninstall_skills(dest)["removed"]
+    assert os.listdir(dest) == []
+
+
+def test_copies_are_lf(dest):
+    install(dest)
+    for name in ("SKILL.md", work.SKILLS_MARKER):
+        assert b"\r\n" not in Path(dest, "work-new", name).read_bytes()
 
 
 def hook_note(result, path):

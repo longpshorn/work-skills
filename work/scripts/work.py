@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -697,6 +698,15 @@ def _refuse_links(dest, plugin):
                            % (dest, ", ".join(linked)))
 
 
+def _leftovers(dest, plugin):
+    """Temporary folders an interrupted run left behind: real folders named .<plugin>-*.tmp-* holding its marker."""
+    if not os.path.isdir(dest):
+        return []
+    return [name for name in sorted(os.listdir(dest))
+            if _is_temp(name, plugin) and not _is_link(os.path.join(dest, name))
+            and (skill_marker(os.path.join(dest, name)) or {}).get("plugin") == plugin]
+
+
 def _refuse_source_links(source):
     for folder, dirs, files in os.walk(source):
         for name in dirs + files:
@@ -706,21 +716,72 @@ def _refuse_source_links(source):
 
 
 def plugin_copies(dest, plugin):
-    """{folder name: marker} of the copies of plugin's skills in dest."""
+    """{folder name: marker} of the copies of plugin's skills in dest: real folders named <plugin>-* whose marker
+    names the plugin."""
     if not os.path.isdir(dest):
         return {}
     found = {}
     for name in sorted(os.listdir(dest)):
-        marker = skill_marker(os.path.join(dest, name))
+        path = os.path.join(dest, name)
+        if not name.startswith(plugin + "-") or _is_link(path):
+            continue
+        marker = skill_marker(path)
         if marker and marker.get("plugin") == plugin:
             found[name] = marker
     return found
 
 
+def _render_copy(source, out, plugin, skill, plugin_root, tool, commit):
+    for folder, _, files in os.walk(source):
+        here = os.path.join(out, os.path.relpath(folder, source))
+        os.makedirs(here, exist_ok=True)
+        for name in files:
+            path = os.path.join(folder, name)
+            if name.endswith(".md"):
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read()
+                if folder == source and name == "SKILL.md":
+                    text = render_skill(text, plugin, skill, plugin_root)
+                else:
+                    text = render_file(text, plugin_root)
+                with open(os.path.join(here, name), "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+            else:
+                shutil.copy2(path, os.path.join(here, name))
+    with open(os.path.join(out, SKILLS_MARKER), "w", encoding="utf-8", newline="\n") as handle:
+        json.dump({"plugin": plugin, "skill": skill, "root": plugin_root, "tool": tool, "commit": commit},
+                  handle, indent=2)
+
+
+def _place(dest, plugin, skill, write):
+    """Write a copy into a temporary folder beside its target, then rename it into place. On failure the old copy, if
+    any, stays where it was, and the temporary folder is removed."""
+    target = os.path.join(dest, plugin + "-" + skill)
+    prefix = ".%s-%s%s" % (plugin, skill, TEMP_INFIX)
+    fresh = tempfile.mkdtemp(dir=dest, prefix=prefix)
+    try:
+        write(fresh)
+        if not os.path.exists(target):
+            os.rename(fresh, target)
+            return
+        old = tempfile.mkdtemp(dir=dest, prefix=prefix)
+        os.rmdir(old)
+        os.rename(target, old)
+        try:
+            os.rename(fresh, target)
+        except BaseException:
+            os.rename(old, target)
+            raise
+        shutil.rmtree(old)
+    finally:
+        if os.path.isdir(fresh):
+            shutil.rmtree(fresh)
+
+
 def install_skills(plugin_root, dest, tool, commit, plugin=PLUGIN_NAME, dry_run=False):
     """Write a rendered copy of each of plugin_root's skills into dest. Refuses, writing nothing, when a target folder
     exists that this command didn't write or a copy is a symlink; removes its own copies of skills the plugin no
-    longer has."""
+    longer has, and the temporary folders of an interrupted run."""
     skills_root = os.path.join(plugin_root, "skills")
     skills = sorted(n for n in os.listdir(skills_root) if os.path.isfile(os.path.join(skills_root, n, "SKILL.md")))
     _refuse_links(dest, plugin)
@@ -732,43 +793,26 @@ def install_skills(plugin_root, dest, tool, commit, plugin=PLUGIN_NAME, dry_run=
     if foreign:
         raise InstallError("%s already holds %s, which install-skills did not write (no %s). Move or remove it, or "
                            "install somewhere else with --dest." % (dest, ", ".join(foreign), SKILLS_MARKER))
-    stale = [name for name, marker in ours.items() if marker.get("skill") not in skills]
+    stale = [name for name, marker in ours.items() if marker.get("skill") not in skills] + _leftovers(dest, plugin)
     result = {"dest": dest, "tool": tool, "installed": [plugin + "-" + s for s in skills], "removed": stale,
               "notes": skills_notes(tool, plugin_root), "dry_run": dry_run}
     if dry_run:
         return result
+    os.makedirs(dest, exist_ok=True)
     for name in stale:
         shutil.rmtree(os.path.join(dest, name))
     for skill in skills:
-        source, target = os.path.join(skills_root, skill), os.path.join(dest, plugin + "-" + skill)
-        if os.path.exists(target):
-            shutil.rmtree(target)
-        for folder, _, files in os.walk(source):
-            out = os.path.join(target, os.path.relpath(folder, source))
-            os.makedirs(out, exist_ok=True)
-            for name in files:
-                path = os.path.join(folder, name)
-                if name.endswith(".md"):
-                    with open(path, encoding="utf-8") as handle:
-                        text = handle.read()
-                    if folder == source and name == "SKILL.md":
-                        text = render_skill(text, plugin, skill, plugin_root)
-                    else:
-                        text = render_file(text, plugin_root)
-                    with open(os.path.join(out, name), "w", encoding="utf-8", newline="\n") as handle:
-                        handle.write(text)
-                else:
-                    shutil.copy2(path, os.path.join(out, name))
-        with open(os.path.join(target, SKILLS_MARKER), "w", encoding="utf-8") as handle:
-            json.dump({"plugin": plugin, "skill": skill, "root": plugin_root, "tool": tool, "commit": commit},
-                      handle, indent=2)
+        source = os.path.join(skills_root, skill)
+        _place(dest, plugin, skill,
+               lambda out, source=source, skill=skill: _render_copy(source, out, plugin, skill, plugin_root, tool,
+                                                                    commit))
     return result
 
 
 def uninstall_skills(dest, plugin=PLUGIN_NAME, dry_run=False):
     """Remove plugin's copies from dest, and nothing else."""
     _refuse_links(dest, plugin)
-    removed = list(plugin_copies(dest, plugin))
+    removed = list(plugin_copies(dest, plugin)) + _leftovers(dest, plugin)
     if not dry_run:
         for name in removed:
             shutil.rmtree(os.path.join(dest, name))
