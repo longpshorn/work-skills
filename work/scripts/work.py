@@ -839,12 +839,14 @@ def refresh_skills(plugin_root, folders, commit, plugin=PLUGIN_NAME, dry_run=Fal
 
 
 def plugin_commit(plugin_root):
-    """The commit of the git clone holding plugin_root. Copies must point at a clone: a plugin cache folder moves on
-    every update."""
+    """The commit of the git clone holding plugin_root. Copies must point at a clone that tracks the plugin: a plugin
+    cache folder moves on every update, even when it sits inside some other repository."""
     code, out = git(plugin_root, "rev-parse", "HEAD")
-    if code != 0 or not out.strip():
-        raise InstallError("%s is not in a git clone. Install from a clone of the repository (git clone ...), not "
-                           "from a plugin cache, so the copies keep pointing at a folder that stays put." % plugin_root)
+    tracked_code, tracked = git(plugin_root, "ls-files", "--", "skills")
+    if code != 0 or not out.strip() or tracked_code != 0 or not tracked.strip():
+        raise InstallError("%s is not in a git clone of the plugin. Install from a clone of the repository (git clone "
+                           "...), not from a plugin cache, so the copies keep pointing at a folder that stays put."
+                           % plugin_root)
     return out.strip()
 
 
@@ -873,6 +875,10 @@ def install_skills_command(args):
             folders = {"dest": args.dest}
         elif args.tool:
             folders = {args.tool: folders[args.tool]}
+        # Look for copies before pulling, so a mistyped --dest never moves the clone.
+        if not installed_skill_dirs(PLUGIN_NAME, folders):
+            raise InstallError("No installed %s skills found in %s; install them first." % (
+                PLUGIN_NAME, ", ".join(dict.fromkeys(folders.values()))))
         pulled = None
         if not args.no_pull and not args.dry_run:
             pulled = pull_plugin(PLUGIN_ROOT)
@@ -884,9 +890,6 @@ def install_skills_command(args):
                 raise InstallError(proc.stderr.strip() or proc.stdout.strip())
             return {"pulled": pulled, "refreshed": json.loads(proc.stdout)["refreshed"]}
         refreshed = refresh_skills(PLUGIN_ROOT, folders, plugin_commit(PLUGIN_ROOT), dry_run=args.dry_run)
-        if not refreshed:
-            raise InstallError("No installed %s skills found in %s; install them first." % (
-                PLUGIN_NAME, ", ".join(dict.fromkeys(folders.values()))))
         return {"pulled": pulled, "refreshed": refreshed}
     tool = args.tool or DEFAULT_SKILLS_TOOL
     return install_skills(PLUGIN_ROOT, args.dest or folders[tool], tool, plugin_commit(PLUGIN_ROOT),

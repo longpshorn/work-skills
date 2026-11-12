@@ -4,6 +4,7 @@ import re
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -402,12 +403,86 @@ def test_refuses_a_root_outside_a_git_checkout(tmp_path):
         work.plugin_commit(str(copy))
 
 
+def test_update_checks_for_copies_before_it_pulls(dest, monkeypatch, capsys):
+    def pull(plugin_root):
+        raise AssertionError("pulled before checking for copies")
+
+    monkeypatch.setattr(work, "pull_plugin", pull)
+    assert work.main(["install-skills", "--update", "--dest", dest]) == 1
+    assert "install them first" in capsys.readouterr().err
+
+
+def test_refuses_an_untracked_folder_inside_some_other_git_repo(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _git(home, "init", "-q")
+    (home / "README").write_text("dotfiles\n", encoding="utf-8")
+    _git(home, "add", "README")
+    _git(home, "commit", "-q", "-m", "init")
+    cache = home / "cache" / "work"
+    shutil.copytree(Path(PLUGIN_ROOT) / "skills", cache / "skills")
+    with pytest.raises(work.InstallError, match="clone"):
+        work.plugin_commit(str(cache))
+
+
 def test_update_refuses_a_clone_with_local_changes(tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "init", "-q", str(clone)], check=True)
     (clone / "dirty.txt").write_text("x")
     with pytest.raises(work.InstallError, match="local changes"):
         work.pull_plugin(str(clone))
+
+
+def _plugin_clone(tmp_path):
+    """An upstream repo holding a copy of this plugin, and a clone of it: (upstream, clone's plugin root)."""
+    upstream = tmp_path / "upstream"
+    ignore = shutil.ignore_patterns("tests", "__pycache__", "*.pyc", ".pytest_cache")
+    shutil.copytree(PLUGIN_ROOT, str(upstream / "work"), ignore=ignore)
+    shutil.copy(os.path.join(os.path.dirname(PLUGIN_ROOT), ".gitignore"), str(upstream / ".gitignore"))
+    _git(tmp_path, "init", "-q", "-b", "main", str(upstream))
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "init")
+    _git(tmp_path, "clone", "-q", str(upstream), str(tmp_path / "clone"))
+    return upstream, str(tmp_path / "clone" / "work")
+
+
+def _tools(root, *args):
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    return subprocess.run([sys.executable, os.path.join(root, "scripts", "work.py"), *args],
+                          capture_output=True, text=True, encoding="utf-8", env=env)
+
+
+def test_pull_fast_forwards_a_clean_clone(tmp_path):
+    upstream, root = _plugin_clone(tmp_path)
+    (upstream / "work" / "NEW.md").write_text("new\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "new")
+    work.pull_plugin(root)
+    assert os.path.isfile(os.path.join(root, "NEW.md"))
+
+
+def test_update_pulls_then_re_renders_with_the_pulled_code(tmp_path):
+    upstream, root = _plugin_clone(tmp_path)
+    dest = str(tmp_path / "skills")
+    done = _tools(root, "install-skills", "--dest", dest)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["dest"] == dest
+    extra = upstream / "work" / "skills" / "extra"
+    extra.mkdir()
+    (extra / "SKILL.md").write_text("---\nname: extra\ndescription: d\n---\n\n# Extra\n\nRun `${CLAUDE_PLUGIN_ROOT}`.\n",
+                                    encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "extra")
+    head = subprocess.run(["git", "-C", str(upstream), "rev-parse", "HEAD"], capture_output=True,
+                          text=True).stdout.strip()
+    done = _tools(root, "install-skills", "--update", "--dest", dest)
+    assert done.returncode == 0, done.stderr
+    result = json.loads(done.stdout)
+    assert result["pulled"] is not None
+    assert "work-extra" in result["refreshed"][0]["installed"]
+    assert work.skill_marker(os.path.join(dest, "work-extra"))["commit"] == head
+    text = read(dest, "work-extra", "SKILL.md")
+    assert "name: work-extra" in text and root.replace("\\", "/") in text
 
 
 def test_the_launcher_runs_install_skills(dest):
