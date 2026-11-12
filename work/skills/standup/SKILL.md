@@ -1,6 +1,6 @@
 ---
 name: standup
-description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from regenerating index.md and log.md.
+description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from regenerating index.md and log.md and, when the user approves, adding missing workstream descriptions.
 ---
 
 # Standup: every workstream at a glance
@@ -16,5 +16,6 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - **Top 5 next steps:** order by state (`active`, `review`, `blocked`, `scoped`, `idea`), then oldest `updated` first
    - **Dream:** the `dream-status` line, shown under the sections only when it prints something
 4. Offer `/work:resume <name>` for the top item.
+5. **Missing descriptions.** Run `work-tools list --no-description`; if it prints nothing, skip this step. Otherwise list those workstreams once and offer to describe them, drafting each from its title and body by the rule in `/work:checkpoint` step 2 (after `title`, one sentence on what the workstream delivers, taken from its ask). Show every draft, then ask which to write: some, all or none (Claude Code: `AskUserQuestion`, multi-select; elsewhere a numbered question). Add only the approved ones, with Edit, and leave `updated` and `generated` alone so a stale workstream stays stale. If at least one was written, run `work-tools index` (it must exit 0), then commit once in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "standup: describe <n> workstreams"`. If the user declines them all, nothing is written and nothing is committed.
 
-Do not commit the regenerated `index.md` and `log.md` or the OKF `type` fields `index` may add; the next `/work:checkpoint` will. Change nothing else.
+Apart from step 5's commit, do not commit the regenerated `index.md` and `log.md` or the OKF `type` fields `index` may add; the next `/work:checkpoint` will. Change nothing else.

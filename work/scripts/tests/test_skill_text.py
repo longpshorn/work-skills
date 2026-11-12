@@ -38,3 +38,14 @@ def test_only_the_helper_line_needs_the_plugin_root():
     lines = [(path.parent.name, line) for path, _, line in skill_lines() if "${CLAUDE_PLUGIN_ROOT}" in line]
     assert lines and all(line.startswith("Helper: `sh \"${CLAUDE_PLUGIN_ROOT}/scripts/work-tools\"`")
                          for _, line in lines)
+
+
+def test_standup_offers_missing_descriptions_with_approval():
+    text = (SKILLS / "standup" / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter = text.split("---")[1]
+    assert "Read-only apart from" in frontmatter and "approve" in frontmatter
+    step = next(line for line in text.splitlines() if "work-tools list --no-description" in line)
+    for part in ("/work:checkpoint", "step 2", "Claude Code: `AskUserQuestion`", "elsewhere",
+                 "work-tools index", 'commit -m "standup: describe', "nothing is written"):
+        assert part in step, part
+    assert "work-tools touch" not in step, "touch would reset a stale workstream's age"
