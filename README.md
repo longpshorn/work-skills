@@ -187,7 +187,13 @@ python -m pip install pytest
 python -m pytest work/scripts/tests -q
 ```
 
-CI runs the tests on Linux, macOS and Windows.
+To run them under the floor on a Mac, with the Command Line Tools Python and [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv run --no-project --python /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
+```
+
+CI runs the tests on Linux, macOS and Windows, on Python 3.9 installed with uv.
 
 ## License
 
