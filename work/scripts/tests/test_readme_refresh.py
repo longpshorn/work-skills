@@ -12,7 +12,7 @@ TEMPLATE_PATH = work.TEMPLATE.relative_to(REPO).as_posix()
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, encoding="utf-8", check=True).stdout
 
 
 def shallow():
@@ -89,9 +89,9 @@ def test_index_refreshes_a_past_copy_an_earlier_index_already_typed(readme):
 @needs_history
 def test_index_refreshes_a_bom_crlf_past_copy_keeping_both(readme):
     old = past_versions()[-1]
-    write_raw(readme, "﻿" + old.replace("\n", "\r\n"))
+    write_raw(readme, "\ufeff" + old.replace("\n", "\r\n"))
     assert work.main(["index"]) == 0
-    assert read_raw(readme) == "﻿" + current().replace("\n", "\r\n")
+    assert read_raw(readme) == "\ufeff" + current().replace("\n", "\r\n")
 
 
 @needs_history
@@ -155,7 +155,7 @@ def test_fingerprint_ignores_bom_crlf_and_the_type_index_adds():
     text = current()
     untyped = text.replace("type: guide\n", "", 1)
     assert untyped != text
-    same = {work.readme_fingerprint(t) for t in (text, "﻿" + text, text.replace("\n", "\r\n"), untyped)}
+    same = {work.readme_fingerprint(t) for t in (text, "\ufeff" + text, text.replace("\n", "\r\n"), untyped)}
     assert same == {work.readme_fingerprint(text)}
     assert work.readme_fingerprint(edited()) != work.readme_fingerprint(text)
     assert len(work.readme_fingerprint(text)) == len(hashlib.sha256().hexdigest())

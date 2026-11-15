@@ -466,7 +466,7 @@ def legacy_files(root):
 def readme_fingerprint(text):
     """The sha256 of a store README's TEXT, ignoring a BOM, CR line endings and what index itself adds
     (the OKF type, and a front-matter block for a copy from before #19)."""
-    text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    text = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(upgraded(text, "README.md").encode("utf-8")).hexdigest()
 
 
@@ -481,8 +481,8 @@ def refresh_readme(root):
     if found == current:
         return None
     if found in PAST_TEMPLATES:
-        bom = "﻿" if text.startswith("﻿") else ""
-        newline = "\r\n" if text.lstrip("﻿").split("\n", 1)[0].endswith("\r") else "\n"
+        bom = "\ufeff" if text.startswith("\ufeff") else ""
+        newline = "\r\n" if text.lstrip("\ufeff").split("\n", 1)[0].endswith("\r") else "\n"
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(bom + template.replace("\n", newline))
         return None
