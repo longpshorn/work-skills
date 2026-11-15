@@ -1007,7 +1007,7 @@ def build_parser():
     sub.add_parser("root", help="print the store's path, whether or not it exists")
     sub.add_parser("init", help="create the store (git on branch log, no remote) unless it exists")
     sub.add_parser("index", help="regenerate index.md and log.md and add missing OKF types; exit 1 on header errors")
-    lister = sub.add_parser("list", help="one line per workstream")
+    lister = sub.add_parser("list", help="one line per workstream; header errors go to stderr")
     lister.add_argument("--no-description", action="store_true",
                         help="only the keys of workstreams with no description, for /work:standup to offer one")
     finder = sub.add_parser("find", help="match a workstream by name, or by --cwd inside a linked repo")
