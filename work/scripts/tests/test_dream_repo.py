@@ -22,7 +22,7 @@ CAPS = {"claude_md_lines": 200}
 
 
 def git(repo, *args, check=True):
-    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, encoding="utf-8")
     if check:
         assert done.returncode == 0, done.stderr
     return done.stdout.strip()

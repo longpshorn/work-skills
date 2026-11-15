@@ -101,7 +101,7 @@ def test_index_link_text_escapes_brackets_and_backslashes(tmp_path):
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, encoding="utf-8",
                           check=True).stdout
 
 

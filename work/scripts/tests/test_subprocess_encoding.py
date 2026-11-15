@@ -1,4 +1,5 @@
-"""Child output is decoded as UTF-8 whatever the locale says (cp1252 on Windows)."""
+"""Child output is decoded as UTF-8 whatever the locale says (cp1252 on Windows), and the rule stays enforced."""
+import ast
 import os
 import subprocess
 import sys
@@ -13,13 +14,73 @@ from dream_helpers import init_repo
 from helpers import header
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+CALLS = {"run", "Popen", "check_output", "check_call", "call"}
+LOCALE_ONLY = {"getoutput", "getstatusoutput"}
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 # A locale whose preferred encoding is ASCII: C, with PEP 538 coercion and PEP 540 UTF-8 mode both off. Windows
 # ignores LC_ALL, and there the locale encoding is cp1252, which garbles UTF-8 instead of raising.
 NON_UTF8_LOCALE = {"LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
-EM_DASH = "—"
+EM_DASH = "\u2014"
+
+
+# ---- The static rule ------------------------------------------------------------------------------------------------
+
+def _is_false(node):
+    return isinstance(node, ast.Constant) and node.value is False
+
+
+def _is_none(node):
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def unnamed_encodings(source, filename="<src>"):
+    """Line numbers of subprocess calls that decode text with the locale encoding."""
+    found = []
+    for node in ast.walk(ast.parse(source, filename)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"):
+            continue
+        if node.func.attr in LOCALE_ONLY:
+            found.append(node.lineno)
+            continue
+        if node.func.attr not in CALLS:
+            continue
+        kwargs = {k.arg: k.value for k in node.keywords if k.arg}
+        spread = any(k.arg is None for k in node.keywords)
+        text = any(name in kwargs and not _is_false(kwargs[name]) for name in ("text", "universal_newlines"))
+        text = text or "errors" in kwargs  # errors= alone turns on text mode with the locale encoding
+        named = "encoding" in kwargs and not _is_none(kwargs["encoding"])
+        if (text or spread) and not named:
+            found.append(node.lineno)
+    return found
+
+
+def test_the_rule_flags_locale_decoding_and_passes_named_or_bytes_mode():
+    src = textwrap.dedent("""\
+        import subprocess
+        subprocess.run(a, text=True)
+        subprocess.run(a, universal_newlines=True)
+        subprocess.Popen(a, errors="replace")
+        subprocess.check_output(a, text=True, encoding=None)
+        subprocess.run(a, **kw)
+        subprocess.getoutput("x")
+        subprocess.run(a, text=True, encoding="utf-8", errors="strict")
+        subprocess.run(a, encoding="utf-8")
+        subprocess.run(a, capture_output=True)
+        subprocess.run(a, text=False)
+        subprocess.run(a, encoding="utf-8", **kw)
+        """)
+    assert unnamed_encodings(src) == [2, 3, 4, 5, 6, 7]
+
+
+def test_every_text_mode_subprocess_call_names_its_encoding():
+    offenders = []
+    for path in sorted(SCRIPTS.rglob("*.py")):
+        lines = unnamed_encodings(path.read_text(encoding="utf-8"), str(path))
+        offenders += ["%s:%d" % (path.relative_to(SCRIPTS).as_posix(), n) for n in lines]
+    assert offenders == [], "pass encoding= (and a deliberate errors=) to these subprocess calls"
 
 
 # ---- Behaviour under a non-UTF-8 locale -----------------------------------------------------------------------------
@@ -55,7 +116,7 @@ def test_drift_counts_a_non_ascii_file_under_a_non_utf8_locale(tmp_path, store, 
     repo = tmp_path / "repo"
     git(tmp_path, "init", "-q", str(repo))
     git(repo, "config", "core.quotepath", "false")  # git prints the name raw, as UTF-8 bytes
-    (repo / "café.txt").write_text("x", encoding="utf-8")
+    (repo / "caf\u00e9.txt").write_text("x", encoding="utf-8")
     write("p/01-a", header(repos=f"[{repo}]"))
     out = under_non_utf8_locale("""
         import work
