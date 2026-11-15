@@ -100,7 +100,7 @@ Know what you are installing:
 - **It opens merge requests (pull requests on GitHub) but never merges.** A fact about one repo can be proposed as a change to that repo's `CLAUDE.md` or `AGENTS.md`, but only for a repo you have allowed with `"promote": true`. The run pushes a branch and opens one merge request per repo for you to review; it never merges and never pushes to the default branch. A proposal is deferred when your checkout of the file differs from the branch it would land on. Facts about you go only to your global `CLAUDE.md`, which the run edits directly.
 - **Paid models run nightly on your plan.** Each run starts an Opus extraction stage and an Opus check per reviewed change, each with turn, time and dollar caps. A night with fewer than `min_conversations` ended conversations makes no model calls. The runs leave no session transcript, so they never appear in tomorrow's digest. The stages ignore your user settings (`--setting-sources project,local`), so your allow rules and plugins never widen what they can do.
 
-The run keeps its own state (`run.log`, digests, a lock) in `~/.local/state/work-dream`. It reads transcripts in `~/.claude/projects` and never sends them anywhere but the models above.
+The run keeps its own state (`run.log`, digests, a lock) in `~/.local/state/work-dream`. `work-tools index` keeps one small file there too, in `readme-kept/`, for a store without a `.git` folder: it remembers which edited store README it already said it kept. It reads transcripts in `~/.claude/projects` and never sends them anywhere but the models above.
 
 ### Install
 
