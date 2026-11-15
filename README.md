@@ -189,11 +189,19 @@ python -m pytest work/scripts/tests -q
 
 CI runs the tests on Linux, macOS and Windows, under Python 3.9 installed with uv.
 
-Your `python` may be newer than 3.9, so run the tests under 3.9 too before you push. On a Mac, the Command Line Tools Python (`/usr/bin/python3`) is 3.9:
+Your `python` may be newer than 3.9, so run the tests under 3.9 too before you push. On any OS, `-p 3.9` has uv find a 3.9, or download one if you have none:
 
 ```sh
-uv run --no-project --python /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
+uv run --no-project -p 3.9 --with pytest python -m pytest work/scripts/tests -q
 ```
+
+On a Mac, to skip the download, point `-p` at the Command Line Tools Python instead. It is 3.9 on current macOS; check with `/usr/bin/python3 --version`, since a newer one no longer tests the floor:
+
+```sh
+uv run --no-project -p /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
+```
+
+To see which version ran, leave off `-q`: pytest's first line names it (`platform ... -- Python 3.9.x`).
 
 ## License
 
