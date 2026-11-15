@@ -128,7 +128,10 @@ def local_date(at):
     return at.astimezone().date()
 
 
-def parse_header(text):
+def header_fields(text, strict=True):
+    """The front-matter of TEXT as raw `key: value` pairs, a list value as a list. Not strict, a line
+    that isn't `key: value` is skipped and an unterminated list keeps the items it has, instead of
+    raising, to recover what an unreadable header still says."""
     lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         raise HeaderError("missing front-matter")
@@ -142,14 +145,28 @@ def parse_header(text):
             continue
         match = re.match(r"([A-Za-z_][\w-]*):\s*(.*)$", line)
         if not match:
-            raise HeaderError(f"line {number}: expected 'key: value'")
+            if strict:
+                raise HeaderError(f"line {number}: expected 'key: value'")
+            continue
         key, value = match.group(1), match.group(2).strip()
+        if value.startswith("[") and not value.endswith("]") and strict:
+            raise HeaderError(f"line {number}: unterminated list")
         if value.startswith("["):
-            if not value.endswith("]"):
-                raise HeaderError(f"line {number}: unterminated list")
-            meta[key] = [unquote(v.strip()) for v in value[1:-1].split(",") if v.strip()]
+            items = value[1:-1] if value.endswith("]") else value[1:]
+            meta[key] = [unquote(v.strip()) for v in items.split(",") if v.strip()]
         else:
             meta[key] = unquote(value)
+    return meta
+
+
+def as_list(value):
+    """A header value that may be one item or a list, as a list without empty items."""
+    values = [value] if isinstance(value, str) else value
+    return [v for v in values if v]
+
+
+def parse_header(text):
+    meta = header_fields(text)
     if "state" not in meta and meta.get("status") in STATES:
         raise LegacyHeaderError(f"legacy 'status: {meta['status']}' key: {LEGACY_UPGRADE}")
     missing = [k for k in REQUIRED if not meta.get(k) and not (k == "generated" and meta.get("updated"))]
@@ -178,9 +195,7 @@ def parse_header(text):
         raise HeaderError(f"bad report {report!r}")
     meta["report"] = report == "true"
     for key in ("repos", "artifacts"):
-        value = meta.get(key, [])
-        values = [value] if isinstance(value, str) else value
-        meta[key] = [v for v in values if v]
+        meta[key] = as_list(meta.get(key, []))
     return meta
 
 
@@ -517,10 +532,19 @@ def find(items, query=None, cwd=None):
             if any(r == here or r in here.parents for r in map(abspath, w.meta.get("repos", [])))]
 
 
+def recovered_repos(path):
+    """The repos an unreadable status file still names, read best-effort with header_fields; none
+    when its text or front-matter can't be read."""
+    try:
+        return as_list(header_fields(read_store_text(path), strict=False).get("repos", []))
+    except (HeaderError, OSError):
+        return []
+
+
 def unreadable_workstreams(errors):
-    """The files load_store could not read, as Workstreams with no header, so find and drift can
-    match them by key, slug or name and say why a match is missing."""
-    return [Workstream(path.parent.name, path, {}) for path, _ in errors]
+    """The files load_store could not read, as Workstreams whose header holds only the repos they
+    still name, so find and drift can match them by key, slug, name or cwd and say why a match is missing."""
+    return [Workstream(path.parent.name, path, {"repos": recovered_repos(path)}) for path, _ in errors]
 
 
 def cmd_find(root, args):
@@ -535,7 +559,7 @@ def cmd_find(root, args):
         print("\n".join(w.key for w in hits))
         return 2
     message = f"work.py: no workstream matches {args.query or cwd!r}"
-    for w in find(unreadable_workstreams(errors), args.query) if args.query else []:
+    for w in find(unreadable_workstreams(errors), args.query, None if args.query else cwd):
         message += f"; {w.path.relative_to(root).as_posix()} matches it {UNREADABLE_HEADER} (error above)"
     print(message, file=sys.stderr)
     return 3

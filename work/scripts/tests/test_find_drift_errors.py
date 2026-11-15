@@ -141,3 +141,81 @@ def test_clean_store_prints_nothing_new(store, clean, capsys, argv, rc_out_err):
     assert (rc, err) == (want_rc, want_err)
     if want_out is not None:
         assert out == want_out
+
+
+@pytest.fixture
+def garden(monkeypatch, tmp_path):
+    """A home whose ~/code/garden is the repo find --cwd runs in (#52)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    return str(tmp_path / "code" / "garden" / "src")
+
+
+def cwd_cause(cwd, rel):
+    return f"work.py: no workstream matches {cwd!r}; {rel} matches it but its header can't be read (error above)"
+
+
+def test_find_cwd_names_a_legacy_file_linked_to_the_repo(store, broken, write, garden, capsys):
+    path = write("garden/01-beds", header(title="Beds", state=None, status="active", repos="[~/code/garden]"))
+    before = path.read_bytes()
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert_both_errors(err)
+    assert "garden/01-beds.md: legacy 'status: active' key" in err
+    assert cwd_cause(garden, "garden/01-beds.md") in err
+    assert "ai/02-bad.md matches it" not in err and "ai/03-legacy.md matches it" not in err
+    assert path.read_bytes() == before
+
+
+def test_find_cwd_names_an_unreadable_file_with_a_bad_line(store, write, garden, capsys):
+    text = header(title="Beds", repos="~/code/garden").replace("---\n", "---\nnot a key value line\n", 1)
+    write("garden/01-beds", text)
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert "garden/01-beds.md: line 2: expected 'key: value'" in err
+    assert cwd_cause(garden, "garden/01-beds.md") in err
+
+
+def test_find_cwd_skips_a_non_utf8_file_that_names_the_repo(store, garden, capsys):
+    data = header(title="Caf\xe9", repos="[~/code/garden]").encode("latin-1")
+    bad = store / "garden" / "01-beds.md"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(data)
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert err == (f"garden/01-beds.md: not valid UTF-8 (byte 0xe9 at offset {data.index(0xe9)}); re-save it as UTF-8\n"
+                   f"work.py: no workstream matches {garden!r}\n")
+    assert bad.read_bytes() == data
+
+
+def test_find_cwd_prefers_a_readable_linked_workstream(store, write, garden, capsys):
+    write("garden/01-beds", header(title="Beds", repos="[~/code/garden]"))
+    write("garden/02-old", header(state=None, status="active", repos="[~/code/garden]"))
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (0, f"{store / 'garden' / '01-beds.md'}\n")
+    assert "garden/02-old.md: legacy 'status: active' key" in err
+    assert "can't be read (error above)" not in err
+
+
+def test_find_cwd_unrelated_repo_gets_no_cause_line(store, write, garden, capsys):
+    write("garden/01-beds", header(state=None, status="active", repos="[~/code/orchard]"))
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert "garden/01-beds.md: legacy 'status: active' key" in err
+    assert "can't be read (error above)" not in err
+
+
+def test_find_cwd_names_a_file_whose_repos_list_is_unterminated(store, write, garden, capsys):
+    write("garden/01-beds", header(title="Beds", repos="[~/code/orchard, ~/code/garden"))
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert "garden/01-beds.md: line 6: unterminated list" in err
+    assert cwd_cause(garden, "garden/01-beds.md") in err
+
+
+def test_find_cwd_skips_a_file_with_unterminated_front_matter(store, write, garden, capsys):
+    path = write("garden/01-beds", "---\ntitle: Beds\nrepos: [~/code/garden]\n")
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert err == f"garden/01-beds.md: unterminated front-matter\nwork.py: no workstream matches {garden!r}\n"
+    assert path.read_text(encoding="utf-8") == "---\ntitle: Beds\nrepos: [~/code/garden]\n"
