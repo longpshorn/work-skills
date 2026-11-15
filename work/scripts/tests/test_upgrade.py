@@ -202,3 +202,30 @@ def test_index_drops_updated_next_to_a_quoted_generated(store, write):
     path = write("ai/01-a", header(type="workstream", generated=quoted, updated="2026-09-14"))
     work.main(["index"])
     assert path.read_text(encoding="utf-8") == header(type="workstream", generated=quoted)
+
+
+LEGACY = "---\ntitle: T\nstatus: active\nnext: N\nupdated: 2026-10-01\n---\n"
+
+
+@pytest.mark.parametrize("legacy", ["ai/01-old", "_archive/ai/01-old"])
+def test_index_leaves_every_updated_alone_while_the_store_predates_okf(store, write, legacy):
+    """The release the upgrade hint names requires updated, so index must not retire it until that run."""
+    old = write(legacy, LEGACY)
+    ok = write("ai/02-ok", header(generated=None, updated="2026-10-02"))
+    both = write("ai/03-both", header(updated="2026-10-03"))
+    assert work.main(["index"]) == 1
+    assert "\nupdated: 2026-10-01\n" in old.read_text(encoding="utf-8")
+    assert "\nupdated: 2026-10-02\n" in ok.read_text(encoding="utf-8")
+    assert "generated" not in ok.read_text(encoding="utf-8")
+    assert "\nupdated: 2026-10-03\n" in both.read_text(encoding="utf-8")
+
+
+def test_index_retires_updated_once_the_store_is_upgraded(store, write):
+    old = write("ai/01-old", LEGACY)
+    ok = write("ai/02-ok", header(generated=None, updated="2026-10-02"))
+    assert work.main(["index"]) == 1
+    old.write_text(LEGACY.replace("status:", "state:"), encoding="utf-8")  # what the upgrade release does
+    assert work.main(["index"]) == 0
+    for path, day in ((old, "2026-10-01"), (ok, "2026-10-02")):
+        text = path.read_text(encoding="utf-8")
+        assert "updated" not in text and f"generated: {stamp(day)}" in text

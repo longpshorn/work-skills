@@ -50,3 +50,23 @@ def test_touch_leaves_a_file_without_front_matter_alone(store, write, capsys):
     assert work.main(["touch", "ai/01-a"]) == 1
     assert path.read_text(encoding="utf-8") == "no header\n"
     assert "ai/01-a: missing front-matter" in capsys.readouterr().err
+
+
+def test_touch_refuses_a_store_that_predates_okf_and_changes_nothing(store, write, capsys):
+    write("ai/01-old", "---\ntitle: T\nstatus: active\nnext: N\nupdated: 2026-10-01\n---\n")
+    path = write("ai/02-a", header(generated=None, updated="2026-10-02"))
+    before = path.read_text(encoding="utf-8")
+    assert work.main(["--now", NOW, "touch", "ai/02-a"]) == 1
+    assert path.read_text(encoding="utf-8") == before
+    err = capsys.readouterr().err
+    assert "ai/01-old.md" in err and work.LEGACY_UPGRADE in err
+
+
+def test_touch_refuses_a_store_with_a_legacy_index_file(store, write, capsys):
+    (store / "INDEX.md").write_text("old\n", encoding="utf-8")
+    path = write("ai/01-a", header(generated=None, updated="2026-10-02"))
+    before = path.read_text(encoding="utf-8")
+    assert work.main(["--now", NOW, "touch", "ai/01-a"]) == 1
+    assert path.read_text(encoding="utf-8") == before
+    err = capsys.readouterr().err
+    assert "INDEX.md" in err and work.LEGACY_UPGRADE in err

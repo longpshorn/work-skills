@@ -304,11 +304,11 @@ def has_at(line):
         return False
 
 
-def upgraded(text, kind, archived=False):
+def upgraded(text, kind, archived=False, retire_updated=True):
     """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description,
-    a workstream's updated date turned into OKF generated (or dropped when a generated with an at is
-    there; kept as the only date otherwise) and, when ARCHIVED, a workstream's missing OKF status set
-    to ARCHIVED_STATUS; nothing else changes."""
+    when RETIRE_UPDATED a workstream's updated date turned into OKF generated (or dropped when a
+    generated with an at is there; kept as the only date otherwise) and, when ARCHIVED, a workstream's
+    missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -324,7 +324,7 @@ def upgraded(text, kind, archived=False):
         purpose = PURPOSE.search("".join(lines[end + 1:]))
         if purpose:
             lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
-    if kind == "status file" and "updated" in keys:
+    if kind == "status file" and retire_updated and "updated" in keys:
         i = keys["updated"]
         if "generated" not in keys:
             backfilled = backfill(lines[i])
@@ -378,6 +378,10 @@ def cmd_touch(root, args):
     if not path.is_file():
         print(f"work.py: no workstream {args.key!r}", file=sys.stderr)
         return 3
+    legacy = legacy_index(root) or legacy_files(root)
+    if legacy:
+        print(f"{legacy[0]}: {LEGACY_UPGRADE}", file=sys.stderr)
+        return 1
     now = args.now or dt.datetime.now().astimezone().replace(microsecond=0)
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
@@ -391,33 +395,59 @@ def cmd_touch(root, args):
     return 0
 
 
-def upgrade_file(path, kind, archived=False):
+def upgrade_file(path, kind, archived=False, retire_updated=True):
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
-    new = upgraded(text, kind, archived)
+    new = upgraded(text, kind, archived, retire_updated)
     if new != text:
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(new)
 
 
-def upgrade_store(root):
-    """Give every store file its OKF type, and archived workstreams their status, with no migration needed."""
-    if (root / "README.md").is_file():
-        upgrade_file(root / "README.md", "README.md")
+def store_files(root):
+    """(path, kind, archived) for every AREA.md and status file in the store, archived ones included."""
     archive = root / "_archive"
     folders = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))]
     folders += [p for p in archive.iterdir() if p.is_dir()] if archive.is_dir() else []
     for folder in folders:
         for path in sorted(folder.glob("*.md")):
             if path.name.lower() not in RESERVED:
-                upgrade_file(path, "AREA.md" if path.name == "AREA.md" else "status file",
-                             archived=folder.parent == archive)
+                yield path, "AREA.md" if path.name == "AREA.md" else "status file", folder.parent == archive
+
+
+def legacy_index(root):
+    """The store-relative names of a leftover pre-OKF index file (INDEX.md in another case)."""
+    return [p.name for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]
+
+
+def legacy_files(root):
+    """The store-relative paths of status files whose header predates the OKF format."""
+    found = []
+    for path, kind, _ in store_files(root):
+        if kind == "status file":
+            try:
+                parse_header(path.read_text(encoding="utf-8"))
+            except LegacyHeaderError:
+                found.append(path.relative_to(root).as_posix())
+            except HeaderError:
+                pass
+    return found
+
+
+def upgrade_store(root):
+    """Give every store file its OKF type, and archived workstreams their status, with no migration needed.
+    While any workstream predates the OKF format, updated stays: the release that upgrades it needs it."""
+    if (root / "README.md").is_file():
+        upgrade_file(root / "README.md", "README.md")
+    retire_updated = not legacy_files(root)
+    for path, kind, archived in store_files(root):
+        upgrade_file(path, kind, archived, retire_updated)
 
 
 def cmd_index(root, args):
-    legacy_index = [p.name for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]
-    if legacy_index:
-        print(f"{legacy_index[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
+    legacy = legacy_index(root)
+    if legacy:
+        print(f"{legacy[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
     upgrade_store(root)
     items, errors = load_store(root)
