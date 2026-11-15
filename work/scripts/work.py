@@ -473,7 +473,8 @@ def readme_fingerprint(text):
 def refresh_readme(root):
     """Replace the store's README.md with the current TEMPLATE when it is an unedited copy of a past
     version (keeping its BOM and line endings). An edited one is kept; returns (path, notice) the first
-    time index sees that README with this TEMPLATE, else None. A non-UTF-8 README raises NotUtf8Error."""
+    time index sees that README with this TEMPLATE (every time in a store without a .git folder, which has
+    nowhere to remember it), else None. A non-UTF-8 README raises NotUtf8Error."""
     path = root / "README.md"
     text = read_store_text(path, newline="")
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -487,7 +488,7 @@ def refresh_readme(root):
             f.write(bom + template.replace("\n", newline))
         return None
     seen = f"{found} {current}\n"
-    marker = root / ".git" / README_KEPT
+    marker = root / ".git" / README_KEPT_MARKER
     try:
         if marker.read_text(encoding="utf-8") == seen:
             return None
@@ -498,8 +499,7 @@ def refresh_readme(root):
             marker.write_text(seen, encoding="utf-8")
         except OSError:
             pass
-    return path, (f"differs from the plugin's store README template, so index kept it as it is; "
-                  f"compare it with {TEMPLATE} and merge by hand")
+    return path, f"{README_KEPT_NOTICE}, so index kept it as it is; compare it with {TEMPLATE} and merge by hand"
 
 
 def upgrade_store(root):
@@ -713,7 +713,8 @@ PAST_TEMPLATES = frozenset({
     "37475cf81f2d42d263986e90407e5be336cab97a9a87b66ac22d6145b304e092",  # 4d0e05b #25
     "256b99d93f026c5a6db5d37c49d4142dba569eacbe0bffcf216aea9768c7b68c",  # 231e89a #27
 })
-README_KEPT = "work-tools-readme-kept"  # in the store's .git: the edited README (and TEMPLATE) index last said it kept
+README_KEPT_MARKER = "work-tools-readme-kept"  # in the store's .git: the edited README (and TEMPLATE) index last said it kept
+README_KEPT_NOTICE = "differs from the plugin's store README template"  # how index names a kept README; skills quote it
 
 
 def enclosing_repo(path):

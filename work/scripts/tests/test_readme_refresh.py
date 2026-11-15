@@ -62,10 +62,12 @@ def readme(store):
 
 @needs_history
 def test_past_templates_cover_the_template_history():
+    """Coverage, not equality: a squash merge drops a branch's intermediate versions from main's history, and
+    their fingerprints in PAST_TEMPLATES are harmless."""
     expected = {work.readme_fingerprint(text) for text in past_versions()}
     missing = expected - work.PAST_TEMPLATES
     assert not missing, f"add these to work.PAST_TEMPLATES: {sorted(missing)}"
-    assert work.PAST_TEMPLATES == expected
+    assert work.readme_fingerprint(current()) not in work.PAST_TEMPLATES
 
 
 @needs_history
