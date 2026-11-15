@@ -203,3 +203,19 @@ def test_find_cwd_unrelated_repo_gets_no_cause_line(store, write, garden, capsys
     assert (rc, out) == (3, "")
     assert "garden/01-beds.md: legacy 'status: active' key" in err
     assert "can't be read (error above)" not in err
+
+
+def test_find_cwd_names_a_file_whose_repos_list_is_unterminated(store, write, garden, capsys):
+    write("garden/01-beds", header(title="Beds", repos="[~/code/orchard, ~/code/garden"))
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert "garden/01-beds.md: line 6: unterminated list" in err
+    assert cwd_cause(garden, "garden/01-beds.md") in err
+
+
+def test_find_cwd_skips_a_file_with_unterminated_front_matter(store, write, garden, capsys):
+    path = write("garden/01-beds", "---\ntitle: Beds\nrepos: [~/code/garden]\n")
+    rc, out, err = run(capsys, "find", "--cwd", garden)
+    assert (rc, out) == (3, "")
+    assert err == f"garden/01-beds.md: unterminated front-matter\nwork.py: no workstream matches {garden!r}\n"
+    assert path.read_text(encoding="utf-8") == "---\ntitle: Beds\nrepos: [~/code/garden]\n"

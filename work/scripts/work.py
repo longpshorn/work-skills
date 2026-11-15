@@ -130,7 +130,8 @@ def local_date(at):
 
 def header_fields(text, strict=True):
     """The front-matter of TEXT as raw `key: value` pairs, a list value as a list. Not strict, a line
-    that can't be read is skipped instead of raised, to recover what an unreadable header still says."""
+    that isn't `key: value` is skipped and an unterminated list keeps the items it has, instead of
+    raising, to recover what an unreadable header still says."""
     lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         raise HeaderError("missing front-matter")
@@ -148,12 +149,11 @@ def header_fields(text, strict=True):
                 raise HeaderError(f"line {number}: expected 'key: value'")
             continue
         key, value = match.group(1), match.group(2).strip()
-        if value.startswith("[") and not value.endswith("]"):
-            if strict:
-                raise HeaderError(f"line {number}: unterminated list")
-            continue
+        if value.startswith("[") and not value.endswith("]") and strict:
+            raise HeaderError(f"line {number}: unterminated list")
         if value.startswith("["):
-            meta[key] = [unquote(v.strip()) for v in value[1:-1].split(",") if v.strip()]
+            items = value[1:-1] if value.endswith("]") else value[1:]
+            meta[key] = [unquote(v.strip()) for v in items.split(",") if v.strip()]
         else:
             meta[key] = unquote(value)
     return meta
