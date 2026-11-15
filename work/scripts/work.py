@@ -45,6 +45,21 @@ class LegacyHeaderError(HeaderError):
     """A header in the format from before the store became an OKF bundle."""
 
 
+class NotUtf8Error(HeaderError):
+    """A store file that is not valid UTF-8 text."""
+
+
+def read_store_text(path, newline=None):
+    """The text of a store file, BOM kept; the one place store files are read. A file that is not
+    valid UTF-8 raises NotUtf8Error, so it is reported like any other per-file header error."""
+    try:
+        with open(path, encoding="utf-8", newline=newline) as f:
+            return f.read()
+    except UnicodeDecodeError as e:
+        raise NotUtf8Error(f"not valid UTF-8 (byte 0x{e.object[e.start]:02x} at offset {e.start}); "
+                           "re-save it as UTF-8") from None
+
+
 @dataclass
 class Workstream:
     area: str
@@ -176,7 +191,7 @@ def load_store(root):
             if path.name == "AREA.md" or path.name.lower() in RESERVED:
                 continue
             try:
-                meta = parse_header(path.read_text(encoding="utf-8"))
+                meta = parse_header(read_store_text(path))
             except HeaderError as e:
                 errors.append((path, e))
                 continue
@@ -250,7 +265,7 @@ def render_log(root, items):
     """The store's OKF log.md (spec section 9): every workstream Log line under its date, newest first."""
     by_date = {}
     for target, w in sorted((w.path.relative_to(root).as_posix(), w) for w in items):
-        for day, fact in reversed(log_entries(w.path.read_text(encoding="utf-8"))):
+        for day, fact in reversed(log_entries(read_store_text(w.path))):
             by_date.setdefault(day, []).append(f"* {link(w.meta['title'], target)}: {fact}")
     out = ["# Work store log"]
     for day in sorted(by_date, reverse=True):
@@ -383,10 +398,8 @@ def cmd_touch(root, args):
         print(f"{legacy[0]}: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
     now = args.now or dt.datetime.now().astimezone().replace(microsecond=0)
-    with open(path, encoding="utf-8", newline="") as f:
-        text = f.read()
     try:
-        new = stamped(text, now)
+        new = stamped(read_store_text(path, newline=""), now)
     except HeaderError as e:
         print(f"{args.key}: {e}", file=sys.stderr)
         return 1
@@ -396,8 +409,11 @@ def cmd_touch(root, args):
 
 
 def upgrade_file(path, kind, archived=False, retire_updated=True):
-    with open(path, encoding="utf-8", newline="") as f:
-        text = f.read()
+    """Add the file's OKF fields; a file that is not UTF-8 is left alone for load_store to report."""
+    try:
+        text = read_store_text(path, newline="")
+    except NotUtf8Error:
+        return
     new = upgraded(text, kind, archived, retire_updated)
     if new != text:
         with open(path, "w", encoding="utf-8", newline="") as f:
@@ -426,7 +442,7 @@ def legacy_files(root):
     for path, kind, _ in store_files(root):
         if kind == "status file":
             try:
-                parse_header(path.read_text(encoding="utf-8"))
+                parse_header(read_store_text(path))
             except LegacyHeaderError:
                 found.append(path.relative_to(root).as_posix())
             except HeaderError:
@@ -444,6 +460,12 @@ def upgrade_store(root):
         upgrade_file(path, kind, archived, retire_updated)
 
 
+def report_errors(root, errors):
+    """Print each per-file header error to stderr as `<store-relative path>: <message>`."""
+    for path, msg in errors:
+        print(f"{path.relative_to(root).as_posix()}: {msg}", file=sys.stderr)
+
+
 def cmd_index(root, args):
     legacy = legacy_index(root)
     if legacy:
@@ -452,16 +474,16 @@ def cmd_index(root, args):
     upgrade_store(root)
     items, errors = load_store(root)
     archived, archived_errors = load_store(root / "_archive") if (root / "_archive").is_dir() else ([], [])
-    errors += [(path, error) for path, error in archived_errors if isinstance(error, LegacyHeaderError)]
+    errors += [(path, error) for path, error in archived_errors if isinstance(error, (LegacyHeaderError, NotUtf8Error))]
     (root / INDEX).write_text(render_index(root, items, errors, args.today), encoding="utf-8")
     (root / LOG).write_text(render_log(root, items + archived), encoding="utf-8")
-    for path, msg in errors:
-        print(f"{path.relative_to(root).as_posix()}: {msg}", file=sys.stderr)
+    report_errors(root, errors)
     return 1 if errors else 0
 
 
 def cmd_list(root, args):
-    items, _ = load_store(root)
+    items, errors = load_store(root)
+    report_errors(root, errors)
     for w in items:
         if not args.no_description:
             print(f"{w.key} · {w.meta['state']} · {w.meta['next']}")
@@ -555,7 +577,7 @@ def modified(path):
 
 def changed_sources(w):
     since, changed = w.meta["date"], []
-    for match in LINK.finditer(w.path.read_text(encoding="utf-8")):
+    for match in LINK.finditer(read_store_text(w.path)):
         written = match.group(1).rstrip(".,;:")
         path = Path(os.path.expanduser(written))
         mtime = modified(path)
