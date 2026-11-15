@@ -1,5 +1,6 @@
 """index refreshes an unedited older copy of the store README and keeps an edited one (#47)."""
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -15,14 +16,55 @@ def git(*args):
     return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, encoding="utf-8", check=True).stdout
 
 
-def shallow():
+SKIP_REASON = "needs the template's full git history (fetch-depth: 0)"
+
+
+def in_ci(environ):
+    """The CI environment variable, which GitHub Actions (and most CI services) set to true."""
+    return environ.get("CI", "").strip().lower() not in ("", "0", "false")
+
+
+def history_state():
+    """'full', 'shallow', or ('error', message) when git can't answer: a git error is not a shallow clone."""
     try:
-        return git("rev-parse", "--is-shallow-repository").strip() == "true"
-    except (OSError, subprocess.CalledProcessError):
-        return True
+        out = git("rev-parse", "--is-shallow-repository")
+    except subprocess.CalledProcessError as e:
+        return ("error", (e.stderr or "").strip() or str(e))
+    except OSError as e:
+        return ("error", str(e))
+    return "shallow" if out.strip() == "true" else "full"
 
 
-needs_history = pytest.mark.skipif(shallow(), reason="needs the template's full git history (fetch-depth: 0)")
+def history_verdict(ci, state):
+    """None to run the history tests, else ('skip' | 'fail', message): skip locally, fail in CI."""
+    if state == "full":
+        return None
+    if not ci:
+        return ("skip", SKIP_REASON)
+    if state == "shallow":
+        why = "the clone is shallow"
+    else:
+        why = f"git can't read the history: {state[1]}"
+    return ("fail", f"CI needs the template's full git history, but {why}; "
+                    "set fetch-depth: 0 on the checkout step in .github/workflows/test.yml")
+
+
+def require_history(ci, state):
+    verdict = history_verdict(ci, state)
+    if verdict is None:
+        return
+    action, message = verdict
+    if action == "skip":
+        pytest.skip(message)
+    pytest.fail(message, pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def full_history():
+    require_history(in_ci(os.environ), history_state())
+
+
+needs_history = pytest.mark.usefixtures("full_history")
 
 
 def committed_versions():
@@ -200,3 +242,82 @@ def test_fingerprint_ignores_bom_crlf_and_the_type_index_adds():
     assert same == {work.readme_fingerprint(text)}
     assert work.readme_fingerprint(edited()) != work.readme_fingerprint(text)
     assert len(work.readme_fingerprint(text)) == len(hashlib.sha256().hexdigest())
+
+
+# The guard itself (#58): skip locally without full history, fail in CI.
+
+@pytest.mark.parametrize("ci", [False, True])
+def test_full_history_runs(ci):
+    assert history_verdict(ci, "full") is None
+
+
+@pytest.mark.parametrize("state", ["shallow", ("error", "fatal: not a git repository")])
+def test_local_run_without_history_skips_with_the_existing_reason(state):
+    assert history_verdict(False, state) == ("skip", SKIP_REASON)
+
+
+def test_ci_shallow_clone_fails_naming_fetch_depth():
+    action, message = history_verdict(True, "shallow")
+    assert action == "fail"
+    assert "fetch-depth: 0" in message and "shallow" in message
+
+
+def test_ci_git_error_fails_with_git_message_and_fetch_depth():
+    action, message = history_verdict(True, ("error", "fatal: not a git repository"))
+    assert action == "fail"
+    assert "fatal: not a git repository" in message and "fetch-depth: 0" in message
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1", "yes"])
+def test_ci_variable_set_means_ci(value):
+    assert in_ci({"CI": value})
+
+
+@pytest.mark.parametrize("environ", [{}, {"CI": ""}, {"CI": "false"}, {"CI": "FALSE"}, {"CI": "0"}])
+def test_ci_variable_unset_or_false_means_local(environ):
+    assert not in_ci(environ)
+
+
+def fake_git(monkeypatch, result):
+    def run(args, **kwargs):
+        if isinstance(result, BaseException):
+            raise result
+        return subprocess.CompletedProcess(args, 0, stdout=result, stderr="")
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+@pytest.mark.parametrize("out, state", [("true\n", "shallow"), ("false\n", "full")])
+def test_history_state_reads_the_clone(monkeypatch, out, state):
+    fake_git(monkeypatch, out)
+    assert history_state() == state
+
+
+def test_history_state_reports_a_git_error_not_shallow(monkeypatch):
+    fake_git(monkeypatch, subprocess.CalledProcessError(128, ["git"], stderr="fatal: not a git repository\n"))
+    assert history_state() == ("error", "fatal: not a git repository")
+
+
+def test_history_state_reports_missing_git_not_shallow(monkeypatch):
+    fake_git(monkeypatch, FileNotFoundError(2, "No such file or directory", "git"))
+    kind, message = history_state()
+    assert kind == "error" and "git" in message
+
+
+def test_require_history_skips_locally():
+    with pytest.raises(pytest.skip.Exception, match=r"fetch-depth: 0"):
+        require_history(False, "shallow")
+
+
+def test_require_history_fails_in_ci():
+    with pytest.raises(pytest.fail.Exception, match=r"fetch-depth: 0"):
+        require_history(True, "shallow")
+
+
+def test_require_history_passes_with_full_history():
+    require_history(True, "full")
+
+
+def test_history_tests_use_the_guard():
+    marked = [name for name, f in list(globals().items()) if name.startswith("test_")
+              and any(m.name == "usefixtures" and "full_history" in m.args for m in getattr(f, "pytestmark", []))]
+    assert len(marked) == 5

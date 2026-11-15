@@ -189,6 +189,8 @@ python -m pytest work/scripts/tests -q
 
 CI runs the tests on Linux, macOS and Windows, under Python 3.9 installed with uv.
 
+The template-history tests in `test_readme_refresh.py` need the repo's full git history. In a shallow clone or a copy without git they skip, but when the `CI` environment variable is set (GitHub Actions sets it) they fail, so keep `fetch-depth: 0` on the workflow's checkout step.
+
 Your `python` may be newer than 3.9, so run the tests under 3.9 too before you push. On any OS, `-p 3.9` has uv find a 3.9, or download one if you have none:
 
 ```sh
