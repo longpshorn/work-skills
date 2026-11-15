@@ -127,14 +127,53 @@ def test_index_says_so_again_after_the_readme_changes(readme, capsys):
     assert "README.md: " in capsys.readouterr().err
 
 
-def test_index_keeps_an_edited_readme_in_a_store_without_git(store, capsys):
+def listing(root):
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+
+
+def test_index_says_so_once_in_a_store_without_git(store, capsys):
     path = store / "README.md"
     write_raw(path, edited())
+    assert work.main(["index"]) == 0
+    assert "README.md: " in capsys.readouterr().err
+    files = listing(store)
+    assert files == sorted(["README.md", work.INDEX, work.LOG])
+    assert work.main(["index"]) == 0
+    assert read_raw(path) == edited()
+    assert "README.md" not in capsys.readouterr().err
+    assert listing(store) == files
+
+
+def test_two_stores_without_git_each_say_so_once(tmp_path, monkeypatch, capsys):
+    for name in ("one", "two"):
+        root = tmp_path / name
+        root.mkdir()
+        write_raw(root / "README.md", edited())
+        monkeypatch.setenv("WORK_STORE", str(root))
+        assert work.main(["index"]) == 0
+        assert "README.md: " in capsys.readouterr().err
+    for name in ("one", "two"):
+        monkeypatch.setenv("WORK_STORE", str(tmp_path / name))
+        assert work.main(["index"]) == 0
+        assert "README.md" not in capsys.readouterr().err
+
+
+def test_a_state_folder_that_cannot_be_written_repeats_the_notice(store, tmp_path, monkeypatch, capsys):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setenv("WORK_DREAM_STATE", str(blocker / "state"))
+    write_raw(store / "README.md", edited())
     for _ in range(2):
         assert work.main(["index"]) == 0
-        assert read_raw(path) == edited()
         assert "README.md: " in capsys.readouterr().err
-    assert not (store / ".git").exists()
+
+
+def test_a_store_with_git_never_touches_the_state_folder(readme, isolated_state, capsys):
+    write_raw(readme, edited())
+    for _ in range(2):
+        assert work.main(["index"]) == 0
+    assert (readme.parent / ".git" / work.README_KEPT_MARKER).is_file()
+    assert not isolated_state.exists()
 
 
 def test_index_leaves_the_current_template_alone(readme, capsys):
