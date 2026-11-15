@@ -33,6 +33,7 @@ GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
 LEGACY_UPGRADE = ("this store predates the OKF format; upgrade it once by running `work-tools index` "
                   "from work-skills commit 54fbc56 (any commit from #19 at be31d22 through 54fbc56 works)")
+UNREADABLE_HEADER = "but its header can't be read"  # how find and drift name an unreadable match; skills quote it
 NUDGE = ("Context was just compacted. If this session touched a tracked "
          "workstream, run /work:checkpoint now from the summary.")
 
@@ -475,9 +476,9 @@ def cmd_index(root, args):
     if legacy:
         print(f"{legacy[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
-    unreadable = upgrade_store(root)
+    upgrade_errors = upgrade_store(root)
     items, errors = load_store(root)
-    errors = unreadable + errors
+    errors = upgrade_errors + errors
     archived, archived_errors = load_store(root / "_archive") if (root / "_archive").is_dir() else ([], [])
     errors += [(path, error) for path, error in archived_errors if isinstance(error, (LegacyHeaderError, NotUtf8Error))]
     (root / INDEX).write_text(render_index(root, items, errors, args.today), encoding="utf-8")
@@ -516,7 +517,7 @@ def find(items, query=None, cwd=None):
             if any(r == here or r in here.parents for r in map(abspath, w.meta.get("repos", [])))]
 
 
-def unreadable(errors):
+def unreadable_workstreams(errors):
     """The files load_store could not read, as Workstreams with no header, so find and drift can
     match them by key, slug or name and say why a match is missing."""
     return [Workstream(path.parent.name, path, {}) for path, _ in errors]
@@ -534,9 +535,8 @@ def cmd_find(root, args):
         print("\n".join(w.key for w in hits))
         return 2
     message = f"work.py: no workstream matches {args.query or cwd!r}"
-    for w in find(unreadable(errors), args.query) if args.query else []:
-        message += (f"; {w.path.relative_to(root).as_posix()} matches it "
-                    "but its header can't be read (error above)")
+    for w in find(unreadable_workstreams(errors), args.query) if args.query else []:
+        message += f"; {w.path.relative_to(root).as_posix()} matches it {UNREADABLE_HEADER} (error above)"
     print(message, file=sys.stderr)
     return 3
 
@@ -616,10 +616,9 @@ def cmd_drift(root, args):
     targets = items if args.all else [w for w in items if w.key == args.key]
     if not targets and not args.all:
         message = f"work.py: no workstream {args.key!r}"
-        for w in unreadable(errors):
+        for w in unreadable_workstreams(errors):
             if w.key == args.key:
-                message += (f"; {w.path.relative_to(root).as_posix()} has that key "
-                            "but its header can't be read (error above)")
+                message += f"; {w.path.relative_to(root).as_posix()} has that key {UNREADABLE_HEADER} (error above)"
         print(message, file=sys.stderr)
         return 3
     for w in targets:
