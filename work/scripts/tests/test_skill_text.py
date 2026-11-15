@@ -69,3 +69,25 @@ def test_checkpoint_says_what_to_do_when_the_store_predates_okf():
     for part in ("predates the OKF format", "upgrade hint", "rather than editing headers by hand",
                  "still commit", "once the store is upgraded"):
         assert part in step, part
+
+
+def skill_line(skill, marker):
+    lines = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    return next(line for line in lines if marker in line)
+
+
+def test_resume_and_checkpoint_quote_finds_unreadable_cause_line():
+    """find names an unreadable match with work.UNREADABLE_HEADER; the skills must quote it to act on it."""
+    for skill, marker in (("resume", "Exit 3:"), ("checkpoint", "**Which workstream?**")):
+        line = skill_line(skill, marker)
+        assert f'"{work.UNREADABLE_HEADER}"' in line, skill
+        assert "fix" in line and "header" in line and "/work:new" in line, skill
+
+
+def test_find_and_drift_stderr_header_errors_are_not_loose_ends():
+    """find and drift repeat every store header error on stderr; skills must not list them as drift or repeat them."""
+    assert "work-tools drift --all 2>/dev/null" in skill_line("standup", "work-tools drift --all"), \
+        "index already listed the errors"
+    assert "already mentioned" in skill_line("resume", "work-tools drift <area>/<slug>")
+    assert "not loose ends" in skill_line("wrap", "work-tools drift <key>")
+    assert "exit code" in skill_line("wrap", "work-tools find <q>")
