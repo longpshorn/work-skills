@@ -620,8 +620,9 @@ def vm_root():
 
 
 def git(repo, *args):
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
-                            timeout=GIT_TIMEOUT)
+    # Git writes UTF-8 whatever the locale says (cp1252 on Windows); callers parse this, so decode strictly.
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, encoding="utf-8",
+                            errors="strict", timeout=GIT_TIMEOUT)
     return result.returncode, result.stdout
 
 
@@ -635,6 +636,8 @@ def repo_issue(written):
         return git_state(repo, written)
     except subprocess.TimeoutExpired:
         return f"{written}: git timed out"
+    except UnicodeDecodeError:
+        return f"{written}: git printed non-UTF-8 output"
 
 
 def git_state(repo, written):
@@ -750,7 +753,8 @@ def cmd_init(root):
         readme.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
     git(root, "add", "-A")
     commit = subprocess.run(["git", "-C", str(root), *IDENTITY_ONLY, "commit", "-q",
-                             "-m", "init: work store"], capture_output=True, text=True, timeout=GIT_TIMEOUT)
+                             "-m", "init: work store"], capture_output=True, encoding="utf-8", errors="replace",
+                             timeout=GIT_TIMEOUT)
     if commit.returncode and not has_git_identity(root):
         print(f"work.py: created {root}, but not committed: git has no identity here. "
               "Set one with git config user.name and git config user.email, then commit in the store.",
@@ -1061,7 +1065,8 @@ def pull_plugin(plugin_root):
     if porcelain.strip():
         raise InstallError("The clone at %s has local changes; commit or remove them, or re-render without pulling "
                            "(install-skills --update --no-pull).\n%s" % (plugin_root, porcelain.rstrip()))
-    proc = subprocess.run(["git", "-C", plugin_root, "pull", "--ff-only"], capture_output=True, text=True)
+    proc = subprocess.run(["git", "-C", plugin_root, "pull", "--ff-only"], capture_output=True, encoding="utf-8",
+                          errors="replace")
     if proc.returncode != 0:
         raise InstallError("git pull --ff-only failed in %s:\n%s" % (plugin_root, (proc.stderr or proc.stdout).strip()))
     return proc.stdout.strip()
@@ -1088,7 +1093,8 @@ def install_skills_command(args):
             # Render with the code just pulled, not the code already loaded.
             argv = [sys.executable, os.path.abspath(__file__), "install-skills", "--update", "--no-pull"]
             argv += ["--dest", args.dest] if args.dest else ["--tool", args.tool] if args.tool else []
-            proc = subprocess.run(argv, capture_output=True, text=True)
+            # main() writes its stdout as UTF-8; the JSON is parsed, so decode strictly.
+            proc = subprocess.run(argv, capture_output=True, encoding="utf-8", errors="strict")
             if proc.returncode != 0:
                 raise InstallError(proc.stderr.strip() or proc.stdout.strip())
             return {"pulled": pulled, "refreshed": json.loads(proc.stdout)["refreshed"]}
