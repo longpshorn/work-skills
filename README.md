@@ -187,7 +187,13 @@ python -m pip install pytest
 python -m pytest work/scripts/tests -q
 ```
 
-CI runs the tests on Linux, macOS and Windows.
+CI runs the tests on Linux, macOS and Windows, under Python 3.9 installed with uv.
+
+Your `python` may be newer than 3.9, so run the tests under 3.9 too before you push. On a Mac, the Command Line Tools Python (`/usr/bin/python3`) is 3.9:
+
+```sh
+uv run --no-project --python /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
+```
 
 ## License
 
