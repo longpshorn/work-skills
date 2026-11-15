@@ -7,6 +7,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """Keep every test out of the real per-user state folder (index remembers a kept README there, #59)."""
+    path = tmp_path / "work-state"
+    monkeypatch.setenv("WORK_DREAM_STATE", str(path))
+    return path
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     root = tmp_path / "store"

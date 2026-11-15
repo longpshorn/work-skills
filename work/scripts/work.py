@@ -470,11 +470,20 @@ def readme_fingerprint(text):
     return hashlib.sha256(upgraded(text, "README.md").encode("utf-8")).hexdigest()
 
 
+def readme_kept_marker(root):
+    """Where index remembers the edited README it last said it kept: in the store's .git folder, or, for a
+    store without one, in the per-user state folder under a name from the store's resolved path (#59)."""
+    if (root / ".git").is_dir():
+        return root / ".git" / README_KEPT_MARKER
+    key = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()
+    return dream.state_dir() / README_KEPT_STATE / key
+
+
 def refresh_readme(root):
     """Replace the store's README.md with the current TEMPLATE when it is an unedited copy of a past
     version (keeping its BOM and line endings). An edited one is kept; returns (path, notice) the first
-    time index sees that README with this TEMPLATE (every time in a store without a .git folder, which has
-    nowhere to remember it), else None. A non-UTF-8 README raises NotUtf8Error."""
+    time index sees that README with this TEMPLATE, else None (every time when readme_kept_marker can't be
+    written). A non-UTF-8 README raises NotUtf8Error."""
     path = root / "README.md"
     text = read_store_text(path, newline="")
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -488,17 +497,19 @@ def refresh_readme(root):
             f.write(bom + template.replace("\n", newline))
         return None
     seen = f"{found} {current}\n"
-    marker = root / ".git" / README_KEPT_MARKER
+    marker = readme_kept_marker(root)
     try:
         if marker.read_text(encoding="utf-8") == seen:
             return None
     except (OSError, UnicodeDecodeError):
         pass
-    if marker.parent.is_dir():
-        try:
+    try:
+        if not (root / ".git").is_dir():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+        if marker.parent.is_dir():
             marker.write_text(seen, encoding="utf-8")
-        except OSError:
-            pass
+    except OSError:
+        pass
     return path, f"{README_KEPT_NOTICE}, so index kept it as it is; compare it with {TEMPLATE} and merge by hand"
 
 
@@ -718,6 +729,7 @@ PAST_TEMPLATES = frozenset({
     "256b99d93f026c5a6db5d37c49d4142dba569eacbe0bffcf216aea9768c7b68c",  # 231e89a #27
 })
 README_KEPT_MARKER = "work-tools-readme-kept"  # in the store's .git: the edited README (and TEMPLATE) index last said it kept
+README_KEPT_STATE = "readme-kept"  # the same, for a store without .git: a folder in dream.state_dir(), one file per store
 README_KEPT_NOTICE = "differs from the plugin's store README template"  # how index names a kept README; skills quote it
 
 
