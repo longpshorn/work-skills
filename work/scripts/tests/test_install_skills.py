@@ -508,3 +508,11 @@ def test_the_readme_shows_the_same_hook_snippets_install_skills_prints():
     blocks = [json.loads(b) for b in re.findall(r"```json\n *(\{\"hooks\".*?)\n *```", readme, re.S)]
     expected = [snippet("/path/to/work-skills/work/scripts/work-tools") for _, _, snippet in work.NUDGE_HOOKS.values()]
     assert blocks == expected
+
+
+def test_the_readme_lists_every_skill_install_skills_writes(dest):
+    install(dest)
+    written = sorted(os.listdir(dest))
+    readme = (Path(PLUGIN_ROOT).parent / "README.md").read_text(encoding="utf-8")
+    bullet = next(line for line in readme.splitlines() if line.startswith("- **What it writes.**"))
+    assert sorted(re.findall(r"`(work-[a-z]+)`", bullet)) == written

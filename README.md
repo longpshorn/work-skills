@@ -34,7 +34,7 @@ sh ~/code/work-skills/work/scripts/work-tools install-skills             # into 
 sh ~/code/work-skills/work/scripts/work-tools install-skills --update    # later: pull the clone, refresh the copies
 ```
 
-- **What it writes.** One folder per skill, named `work-<skill>` (`work-new`, `work-resume`, `work-checkpoint`, `work-wrap`, `work-standup`), so generic names such as `new` and `resume` can't collide with another package's skills. In each copy `${CLAUDE_PLUGIN_ROOT}`, which only Claude Code fills in, is replaced by the clone's absolute `work` folder (forward slashes on Windows too), so every skill finds its helper. A note under the heading says that `/work:<name>` in the text means the `work-<name>` skill.
+- **What it writes.** One folder for each skill in `work/skills/`, named `work-<skill>` (today `work-new`, `work-resume`, `work-checkpoint`, `work-wrap`, `work-standup`, `work-dream`), so generic names such as `new` and `resume` can't collide with another package's skills. In each copy `${CLAUDE_PLUGIN_ROOT}`, which only Claude Code fills in, is replaced by the clone's absolute `work` folder (forward slashes on Windows too), so every skill finds its helper. A note under the heading says that `/work:<name>` in the text means the `work-<name>` skill.
 - **Where.** `--tool` picks a tool's own folder instead of the shared one, and `--dest` any folder. Run it once per tool you want, or once for all four with the default. Install into one folder per tool: Gemini CLI warns when the same skill is in both of its folders.
 
   | `--tool` | Folder | Source |
