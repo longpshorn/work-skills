@@ -30,12 +30,18 @@ OKF_VERSION = "0.2"
 STALE_DAYS = 14
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
+LEGACY_UPGRADE = ("this store predates the OKF format; upgrade it once by running `work-tools index` "
+                  "from work-skills commit 54fbc56 (or any release before #25)")
 NUDGE = ("Context was just compacted. If this session touched a tracked "
          "workstream, run /work:checkpoint now from the summary.")
 
 
 class HeaderError(ValueError):
     pass
+
+
+class LegacyHeaderError(HeaderError):
+    """A header in the format from before the store became an OKF bundle."""
 
 
 @dataclass
@@ -118,7 +124,7 @@ def parse_header(text):
         else:
             meta[key] = unquote(value)
     if "state" not in meta and meta.get("status") in STATES:
-        meta["state"] = meta.pop("status")
+        raise LegacyHeaderError(f"legacy 'status: {meta['status']}' key: {LEGACY_UPGRADE}")
     missing = [k for k in REQUIRED if not meta.get(k)]
     if missing:
         raise HeaderError("missing " + ", ".join(missing))
@@ -153,7 +159,7 @@ def load_store(root):
             try:
                 meta = parse_header(path.read_text(encoding="utf-8"))
             except HeaderError as e:
-                errors.append((path, str(e)))
+                errors.append((path, e))
                 continue
             items.append(Workstream(area.name, path, meta))
     return items, errors
@@ -233,27 +239,6 @@ def render_log(root, items):
     return "\n".join(out) + "\n"
 
 
-def git_tracks(root, name):
-    return (root / ".git").exists() and git(root, "ls-files", "--error-unmatch", name)[0] == 0
-
-
-def retire_legacy_index(root):
-    """Rename an index.md spelled in another case (the pre-OKF INDEX.md) so git records the new name.
-
-    macOS and Windows treat both spellings as one file, so a plain rename leaves git tracking the old one.
-    """
-    for legacy in [p for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]:
-        tracked = git_tracks(root, legacy.name)
-        if any(p.name == INDEX for p in root.iterdir()):
-            if tracked:
-                git(root, "rm", "-q", "--cached", legacy.name)
-            legacy.unlink()
-        elif tracked:
-            git(root, "mv", "-f", legacy.name, INDEX)
-        else:
-            os.replace(legacy, root / INDEX)
-
-
 KEY = re.compile(r"\s*([A-Za-z_][\w-]*):")
 PURPOSE = re.compile(r"^\*\*Purpose:\*\*\s*(.+?)\s*$", re.M)
 
@@ -281,9 +266,8 @@ def front_matter(lines):
 
 
 def upgraded(text, kind, archived=False):
-    """TEXT with the OKF type for KIND added, a legacy status key renamed to state, an AREA.md's
-    **Purpose:** line copied to its description and, when ARCHIVED, a workstream's missing OKF status
-    set to ARCHIVED_STATUS; nothing else changes."""
+    """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description
+    and, when ARCHIVED, a workstream's missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -299,12 +283,6 @@ def upgraded(text, kind, archived=False):
         purpose = PURPOSE.search("".join(lines[end + 1:]))
         if purpose:
             lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
-    if kind == "status file" and "state" not in keys and "status" in keys:
-        i = keys["status"]
-        value = unquote(strip_comment(lines[i]).split(":", 1)[1].strip())
-        if value in STATES:
-            lines[i] = lines[i].replace("status", "state", 1)
-            keys["state"] = keys.pop("status")
     if kind == "status file" and archived and "status" not in keys:
         lines.insert(keys["state"] + 1 if "state" in keys else end, f"status: {ARCHIVED_STATUS}{newline}")
     if "type" not in keys:
@@ -380,11 +358,15 @@ def upgrade_store(root):
 
 
 def cmd_index(root, args):
+    legacy_index = [p.name for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]
+    if legacy_index:
+        print(f"{legacy_index[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
+        return 1
     upgrade_store(root)
     items, errors = load_store(root)
-    retire_legacy_index(root)
+    archived, archived_errors = load_store(root / "_archive") if (root / "_archive").is_dir() else ([], [])
+    errors += [(path, error) for path, error in archived_errors if isinstance(error, LegacyHeaderError)]
     (root / INDEX).write_text(render_index(root, items, errors, args.today), encoding="utf-8")
-    archived = load_store(root / "_archive")[0] if (root / "_archive").is_dir() else []
     (root / LOG).write_text(render_log(root, items + archived), encoding="utf-8")
     for path, msg in errors:
         print(f"{path.relative_to(root).as_posix()}: {msg}", file=sys.stderr)

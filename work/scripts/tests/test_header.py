@@ -67,7 +67,7 @@ def test_load_store_skips_area_md_and_underscore_dirs(store, write):
     items, errors = work.load_store(store)
     assert [w.key for w in items] == ["garden/01-alpha"]
     assert items[0].name == "alpha" and items[0].slug == "01-alpha"
-    assert [(p.name, msg) for p, msg in errors] == [("02-bad.md", "missing front-matter")]
+    assert [(p.name, str(error)) for p, error in errors] == [("02-bad.md", "missing front-matter")]
 
 
 def test_nudge_prints_when_store_exists(store, capsys):
@@ -119,9 +119,9 @@ def test_type_is_optional_and_workstream_is_accepted():
     assert work.parse_header(header(type=work.TYPES["status file"]))["type"] == "workstream"
 
 
-def test_legacy_status_is_read_as_state():
-    meta = work.parse_header(header(state=None, status="blocked"))
-    assert meta["state"] == "blocked"
+def test_legacy_status_key_is_rejected_with_upgrade_hint():
+    with pytest.raises(work.HeaderError, match=r"legacy 'status: blocked'.*work-tools index.*54fbc56"):
+        work.parse_header(header(state=None, status="blocked"))
 
 
 def test_state_wins_and_okf_status_is_left_alone():

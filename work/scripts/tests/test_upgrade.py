@@ -15,13 +15,33 @@ def write_raw(path, text):
         f.write(text)
 
 
-def test_index_adds_type_and_renames_legacy_status_keeping_bom_crlf_and_comments(store):
+def test_index_adds_type_keeping_bom_crlf_and_comments(store):
     path = store / "ai" / "01-a.md"
-    write_raw(path, "\ufeff---\r\ntitle: A\r\nstatus: active   # idea | active\r\n"
+    write_raw(path, "\ufeff---\r\ntitle: A\r\nstate: active   # idea | active\r\n"
                     "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
-    work.main(["index"])
+    assert work.main(["index"]) == 0
     assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: A\r\nstate: active   # idea | active\r\n"
                               "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
+
+
+@pytest.mark.parametrize("key", ["ai/01-a", "_archive/ai/01-old"])
+def test_index_reports_a_legacy_status_file_and_leaves_its_key(store, write, capsys, key):
+    write("ai/02-ok", header())
+    path = write(key, header(state=None, status="done"))
+    assert work.main(["index"]) == 1
+    text = path.read_text(encoding="utf-8")
+    assert "\nstatus: done\n" in text and "state:" not in text
+    assert work.ARCHIVED_STATUS not in text
+    err = capsys.readouterr().err
+    assert f"{key}.md: legacy 'status: done'" in err and "54fbc56" in err
+    assert f"{key}.md) - legacy 'status: done'" in (store / "index.md").read_text(encoding="utf-8")
+
+
+def test_index_still_ignores_other_header_errors_in_archived_files(store, write):
+    write("ai/01-a", header())
+    write("_archive/ai/01-old", header(state="done", next=None))
+    assert work.main(["index"]) == 0
+    assert "# Errors" not in (store / "index.md").read_text(encoding="utf-8")
 
 
 def test_index_keeps_an_okf_status_next_to_state(store, write):
@@ -41,7 +61,7 @@ def test_index_gives_area_and_readme_a_front_matter_block(store, write):
 
 
 def test_index_upgrades_archived_workstreams(store, write):
-    path = write("_archive/ai/01-old", header(state=None, status="done"))
+    path = write("_archive/ai/01-old", header(state="done"))
     work.main(["index"])
     assert path.read_text(encoding="utf-8").startswith("---\ntype: workstream\n")
     assert "\nstate: done\n" in path.read_text(encoding="utf-8")
@@ -89,12 +109,6 @@ def test_index_marks_an_archived_workstream_deprecated_inserting_one_line(store)
     assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
                               f"status: {work.ARCHIVED_STATUS}\r\n"
                               "next: None\r\nupdated: 2026-10-01\r\n---\r\n# Old\r\n")
-
-
-def test_index_marks_a_legacy_archived_status_after_renaming_it_to_state(store, write):
-    path = write("_archive/ai/01-old", header(state=None, status="done  # x"))
-    work.main(["index"])
-    assert f"\nstate: done  # x\nstatus: {work.ARCHIVED_STATUS}\n" in path.read_text(encoding="utf-8")
 
 
 def test_index_marks_an_archived_file_without_state_before_the_closing_line(store, write):
