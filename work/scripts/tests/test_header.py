@@ -126,6 +126,11 @@ def test_legacy_status_key_is_rejected_with_upgrade_hint():
         work.parse_header(header(state=None, status="blocked"))
 
 
+def test_upgrade_hint_names_only_the_releases_that_can_upgrade():
+    assert "from #19 at be31d22 through 54fbc56" in work.LEGACY_UPGRADE
+    assert "before #25" not in work.LEGACY_UPGRADE
+
+
 def test_state_wins_and_okf_status_is_left_alone():
     meta = work.parse_header(header(state="review", status="deprecated"))
     assert meta["state"] == "review" and meta["status"] == "deprecated"

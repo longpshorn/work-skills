@@ -32,7 +32,7 @@ OUT_OF_RANGE = (ValueError, OverflowError, OSError)  # what datetime raises for 
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
 LEGACY_UPGRADE = ("this store predates the OKF format; upgrade it once by running `work-tools index` "
-                  "from work-skills commit 54fbc56 (or any release before #25)")
+                  "from work-skills commit 54fbc56 (any commit from #19 at be31d22 through 54fbc56 works)")
 NUDGE = ("Context was just compacted. If this session touched a tracked "
          "workstream, run /work:checkpoint now from the summary.")
 
