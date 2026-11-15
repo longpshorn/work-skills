@@ -34,7 +34,7 @@ def test_index_reports_a_non_utf8_archived_file(store, write, capsys):
 
 
 def test_index_accepts_a_utf8_file_with_a_bom(store, write):
-    write("ai/01-a", "﻿" + header(title="Café"))
+    write("ai/01-a", "\ufeff" + header(title="Café"))
     assert work.main(["index"]) == 0
     assert "[Café](ai/01-a.md)" in (store / "index.md").read_text(encoding="utf-8")
 
@@ -77,3 +77,15 @@ def test_drift_all_skips_a_non_utf8_file(store, write, capsys):
     write("ai/01-a", header())
     write_bytes(store, "ai/02-bad", LATIN1)
     assert work.main(["drift", "--all"]) == 0
+
+
+def test_index_reports_a_non_utf8_area_or_readme(store, write, capsys):
+    write("ai/01-a", header())
+    area = write_bytes(store, "ai/AREA", b"# Caf\xe9\n")
+    readme = write_bytes(store, "README", b"# Caf\xe9\n")
+    assert work.main(["index"]) == 1
+    err = capsys.readouterr().err
+    assert err.count("ai/AREA.md: not valid UTF-8") == 1
+    assert err.count("README.md: not valid UTF-8") == 1
+    assert "[ai/AREA.md](ai/AREA.md) - not valid UTF-8" in (store / "index.md").read_text(encoding="utf-8")
+    assert area.read_bytes() == b"# Caf\xe9\n" and readme.read_bytes() == b"# Caf\xe9\n"

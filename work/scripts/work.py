@@ -409,11 +409,7 @@ def cmd_touch(root, args):
 
 
 def upgrade_file(path, kind, archived=False, retire_updated=True):
-    """Add the file's OKF fields; a file that is not UTF-8 is left alone for load_store to report."""
-    try:
-        text = read_store_text(path, newline="")
-    except NotUtf8Error:
-        return
+    text = read_store_text(path, newline="")
     new = upgraded(text, kind, archived, retire_updated)
     if new != text:
         with open(path, "w", encoding="utf-8", newline="") as f:
@@ -452,12 +448,20 @@ def legacy_files(root):
 
 def upgrade_store(root):
     """Give every store file its OKF type, and archived workstreams their status, with no migration needed.
-    While any workstream predates the OKF format, updated stays: the release that upgrades it needs it."""
-    if (root / "README.md").is_file():
-        upgrade_file(root / "README.md", "README.md")
+    While any workstream predates the OKF format, updated stays: the release that upgrades it needs it.
+    A file that is not UTF-8 is left alone. Returns (path, error) for each such README.md or AREA.md;
+    load_store reports status files."""
+    files = [(root / "README.md", "README.md", False)] if (root / "README.md").is_file() else []
+    files += list(store_files(root))
     retire_updated = not legacy_files(root)
-    for path, kind, archived in store_files(root):
-        upgrade_file(path, kind, archived, retire_updated)
+    errors = []
+    for path, kind, archived in files:
+        try:
+            upgrade_file(path, kind, archived, retire_updated)
+        except NotUtf8Error as e:
+            if kind != "status file":
+                errors.append((path, e))
+    return errors
 
 
 def report_errors(root, errors):
@@ -471,8 +475,9 @@ def cmd_index(root, args):
     if legacy:
         print(f"{legacy[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
-    upgrade_store(root)
+    unreadable = upgrade_store(root)
     items, errors = load_store(root)
+    errors = unreadable + errors
     archived, archived_errors = load_store(root / "_archive") if (root / "_archive").is_dir() else ([], [])
     errors += [(path, error) for path, error in archived_errors if isinstance(error, (LegacyHeaderError, NotUtf8Error))]
     (root / INDEX).write_text(render_index(root, items, errors, args.today), encoding="utf-8")
