@@ -20,7 +20,7 @@ import dream
 
 STATES = ("idea", "scoped", "active", "blocked", "review", "done")
 ARCHIVED_STATUS = "deprecated"
-REQUIRED = ("title", "state", "next", "updated")
+REQUIRED = ("title", "state", "next", "generated")
 ACTOR = "process:work-tools"
 TYPES = {"status file": "workstream", "AREA.md": "area", "README.md": "guide"}
 INDEX = "index.md"
@@ -28,10 +28,11 @@ LOG = "log.md"
 RESERVED = (INDEX, LOG)
 OKF_VERSION = "0.2"
 STALE_DAYS = 14
+OUT_OF_RANGE = (ValueError, OverflowError, OSError)  # what datetime raises for a date the local calendar can't hold
 GIT_TIMEOUT = 10
 IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
 LEGACY_UPGRADE = ("this store predates the OKF format; upgrade it once by running `work-tools index` "
-                  "from work-skills commit 54fbc56 (or any release before #25)")
+                  "from work-skills commit 54fbc56 (any commit from #19 at be31d22 through 54fbc56 works)")
 NUDGE = ("Context was just compacted. If this session touched a tracked "
          "workstream, run /work:checkpoint now from the summary.")
 
@@ -101,6 +102,16 @@ def parse_generated(value):
     return generated
 
 
+def generated_value(at):
+    """The header value of OKF's generated for a change work-tools made at AT, an aware datetime."""
+    return f"{{ by: {ACTOR}, at: {at.isoformat()} }}"
+
+
+def local_date(at):
+    """The reader's local date of AT, an aware datetime, whatever its own offset."""
+    return at.astimezone().date()
+
+
 def parse_header(text):
     lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
@@ -125,19 +136,27 @@ def parse_header(text):
             meta[key] = unquote(value)
     if "state" not in meta and meta.get("status") in STATES:
         raise LegacyHeaderError(f"legacy 'status: {meta['status']}' key: {LEGACY_UPGRADE}")
-    missing = [k for k in REQUIRED if not meta.get(k)]
+    missing = [k for k in REQUIRED if not meta.get(k) and not (k == "generated" and meta.get("updated"))]
     if missing:
         raise HeaderError("missing " + ", ".join(missing))
     if meta["state"] not in STATES:
         raise HeaderError(f"bad state {meta['state']!r}")
     if meta.get("type", TYPES["status file"]) != TYPES["status file"]:
         raise HeaderError(f"bad type {meta['type']!r}")
-    try:
-        meta["updated"] = dt.date.fromisoformat(meta["updated"])
-    except ValueError:
-        raise HeaderError(f"bad updated {meta['updated']!r}") from None
-    if "generated" in meta:
+    if meta.get("generated"):
         meta["generated"] = parse_generated(meta["generated"])
+    if "at" in (meta.get("generated") or {}):
+        try:
+            meta["date"] = local_date(meta["generated"]["at"])
+        except OUT_OF_RANGE:
+            raise HeaderError(f"bad generated at {meta['generated']['at'].isoformat()!r}") from None
+    elif meta.get("generated") and not meta.get("updated"):
+        raise HeaderError("generated has no at")
+    else:
+        try:
+            meta["date"] = dt.date.fromisoformat(meta["updated"])
+        except ValueError:
+            raise HeaderError(f"bad updated {meta['updated']!r}") from None
     report = meta.get("report", "true")
     if report not in ("true", "false"):
         raise HeaderError(f"bad report {report!r}")
@@ -190,11 +209,11 @@ def render_index(root, items, errors, today):
             if w.area != area:
                 continue
             m = w.meta
-            age = (today - m["updated"]).days
+            age = (today - m["date"]).days
             flag = " ⚠ stale" if age >= STALE_DAYS and m["state"] != "done" else ""
             state = m["state"] if m["report"] else f"{m['state']} · off-report"
             facts = [m["description"]] if m.get("description") else []
-            facts += [state, m["next"], f"{m['updated']} ({age}d){flag}"]
+            facts += [state, m["next"], f"{m['date']} ({age}d){flag}"]
             out.append(f"* {link(m['title'], f'{w.area}/{w.path.name}')} - {' · '.join(facts)}")
         out.append("")
     if errors:
@@ -265,9 +284,31 @@ def front_matter(lines):
     return end, keys
 
 
-def upgraded(text, kind, archived=False):
-    """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description
-    and, when ARCHIVED, a workstream's missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
+def backfill(line):
+    """LINE, a workstream's 'updated: YYYY-MM-DD' line, as its OKF generated line stamped at local noon
+    on that date (so the date reads back the same in any zone within 12 hours); None if the date is bad
+    or the local calendar can't hold it."""
+    try:
+        day = dt.date.fromisoformat(unquote(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip()))
+        at = dt.datetime.combine(day, dt.time(12)).astimezone()
+    except OUT_OF_RANGE:
+        return None
+    return with_value(line, generated_value(at), "generated")
+
+
+def has_at(line):
+    """Whether LINE, a 'generated: ...' header line, holds a valid generated value with an at."""
+    try:
+        return "at" in parse_generated(unquote(strip_comment(line.rstrip("\r\n")).split(":", 1)[1].strip()))
+    except HeaderError:
+        return False
+
+
+def upgraded(text, kind, archived=False, retire_updated=True):
+    """TEXT with the OKF type for KIND added, an AREA.md's **Purpose:** line copied to its description,
+    when RETIRE_UPDATED a workstream's updated date turned into OKF generated (or dropped when a
+    generated with an at is there; kept as the only date otherwise) and, when ARCHIVED, a workstream's
+    missing OKF status set to ARCHIVED_STATUS; nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -283,6 +324,18 @@ def upgraded(text, kind, archived=False):
         purpose = PURPOSE.search("".join(lines[end + 1:]))
         if purpose:
             lines.insert(end, f"description: {yaml_scalar(purpose.group(1))}{newline}")
+    if kind == "status file" and retire_updated and "updated" in keys:
+        i = keys["updated"]
+        if "generated" not in keys:
+            backfilled = backfill(lines[i])
+            if backfilled is not None:
+                lines[i] = backfilled
+                keys["generated"] = keys.pop("updated")
+        elif has_at(lines[keys["generated"]]):
+            del lines[i]
+            end -= 1
+            del keys["updated"]
+            keys = {k: v - (v > i) for k, v in keys.items()}
     if kind == "status file" and archived and "status" not in keys:
         lines.insert(keys["state"] + 1 if "state" in keys else end, f"status: {ARCHIVED_STATUS}{newline}")
     if "type" not in keys:
@@ -290,14 +343,16 @@ def upgraded(text, kind, archived=False):
     return bom + "".join(lines)
 
 
-def with_value(line, value):
-    """LINE, a 'key: value' header line, holding VALUE instead; its comment and line ending stay."""
+def with_value(line, value, key=None):
+    """LINE, a 'key: value' header line, holding VALUE (under KEY, if given) instead; its comment and line
+    ending stay."""
     head = strip_comment(line.rstrip("\r\n"))
-    return f"{head.split(':', 1)[0]}: {value}{line[len(head):]}"
+    return f"{key or head.split(':', 1)[0]}: {value}{line[len(head):]}"
 
 
 def stamped(text, now):
-    """TEXT with updated set to NOW's date and generated to { by: ACTOR, at: NOW }; nothing else changes."""
+    """TEXT with generated set to { by: ACTOR, at: NOW } and any updated line removed (a lone updated
+    line is replaced in place); nothing else changes."""
     bom = "\ufeff" if text.startswith("\ufeff") else ""
     lines = text[len(bom):].splitlines(keepends=True)
     block = front_matter(lines)
@@ -305,14 +360,16 @@ def stamped(text, now):
         raise HeaderError("missing front-matter")
     end, keys = block
     newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    values = {"updated": now.date().isoformat(), "generated": f"{{ by: {ACTOR}, at: {now.isoformat()} }}"}
-    for key, value in values.items():
-        if key in keys:
-            lines[keys[key]] = with_value(lines[keys[key]], value)
-        else:
-            at = keys["updated"] + 1 if "updated" in keys else end
-            lines.insert(at, f"{key}: {value}{newline}")
-            keys[key], end = at, end + 1
+    value = generated_value(now)
+    if "generated" in keys:
+        lines[keys["generated"]] = with_value(lines[keys["generated"]], value)
+        if "updated" in keys:
+            del lines[keys["updated"]]
+    elif "updated" in keys:
+        i = keys["updated"]
+        lines[i] = with_value(lines[i], value, "generated")
+    else:
+        lines.insert(end, f"generated: {value}{newline}")
     return bom + "".join(lines)
 
 
@@ -321,6 +378,10 @@ def cmd_touch(root, args):
     if not path.is_file():
         print(f"work.py: no workstream {args.key!r}", file=sys.stderr)
         return 3
+    legacy = legacy_index(root) or legacy_files(root)
+    if legacy:
+        print(f"{legacy[0]}: {LEGACY_UPGRADE}", file=sys.stderr)
+        return 1
     now = args.now or dt.datetime.now().astimezone().replace(microsecond=0)
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
@@ -334,33 +395,59 @@ def cmd_touch(root, args):
     return 0
 
 
-def upgrade_file(path, kind, archived=False):
+def upgrade_file(path, kind, archived=False, retire_updated=True):
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
-    new = upgraded(text, kind, archived)
+    new = upgraded(text, kind, archived, retire_updated)
     if new != text:
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(new)
 
 
-def upgrade_store(root):
-    """Give every store file its OKF type, and archived workstreams their status, with no migration needed."""
-    if (root / "README.md").is_file():
-        upgrade_file(root / "README.md", "README.md")
+def store_files(root):
+    """(path, kind, archived) for every AREA.md and status file in the store, archived ones included."""
     archive = root / "_archive"
     folders = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))]
     folders += [p for p in archive.iterdir() if p.is_dir()] if archive.is_dir() else []
     for folder in folders:
         for path in sorted(folder.glob("*.md")):
             if path.name.lower() not in RESERVED:
-                upgrade_file(path, "AREA.md" if path.name == "AREA.md" else "status file",
-                             archived=folder.parent == archive)
+                yield path, "AREA.md" if path.name == "AREA.md" else "status file", folder.parent == archive
+
+
+def legacy_index(root):
+    """The store-relative names of a leftover pre-OKF index file (INDEX.md in another case)."""
+    return [p.name for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]
+
+
+def legacy_files(root):
+    """The store-relative paths of status files whose header predates the OKF format."""
+    found = []
+    for path, kind, _ in store_files(root):
+        if kind == "status file":
+            try:
+                parse_header(path.read_text(encoding="utf-8"))
+            except LegacyHeaderError:
+                found.append(path.relative_to(root).as_posix())
+            except HeaderError:
+                pass
+    return found
+
+
+def upgrade_store(root):
+    """Give every store file its OKF type, and archived workstreams their status, with no migration needed.
+    While any workstream predates the OKF format, updated stays: the release that upgrades it needs it."""
+    if (root / "README.md").is_file():
+        upgrade_file(root / "README.md", "README.md")
+    retire_updated = not legacy_files(root)
+    for path, kind, archived in store_files(root):
+        upgrade_file(path, kind, archived, retire_updated)
 
 
 def cmd_index(root, args):
-    legacy_index = [p.name for p in root.iterdir() if p.name.lower() == INDEX and p.name != INDEX]
-    if legacy_index:
-        print(f"{legacy_index[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
+    legacy = legacy_index(root)
+    if legacy:
+        print(f"{legacy[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
     upgrade_store(root)
     items, errors = load_store(root)
@@ -467,7 +554,7 @@ def modified(path):
 
 
 def changed_sources(w):
-    since, changed = w.meta["updated"], []
+    since, changed = w.meta["date"], []
     for match in LINK.finditer(w.path.read_text(encoding="utf-8")):
         written = match.group(1).rstrip(".,;:")
         path = Path(os.path.expanduser(written))
@@ -481,7 +568,7 @@ def changed_sources(w):
 
 def drift_lines(w):
     lines = [issue for issue in map(repo_issue, w.meta["repos"]) if issue]
-    lines += [f"changed since {w.meta['updated']}: {p}" for p in changed_sources(w)]
+    lines += [f"changed since {w.meta['date']}: {p}" for p in changed_sources(w)]
     return lines
 
 
@@ -904,11 +991,11 @@ def build_parser():
     finder = sub.add_parser("find", help="match a workstream by name, or by --cwd inside a linked repo")
     finder.add_argument("query", nargs="?")
     finder.add_argument("--cwd")
-    drifter = sub.add_parser("drift", help="uncommitted/unpushed repo work and linked files changed since 'updated'")
+    drifter = sub.add_parser("drift", help="uncommitted/unpushed repo work and linked files changed since generated.at's date")
     target = drifter.add_mutually_exclusive_group(required=True)
     target.add_argument("key", nargs="?")
     target.add_argument("--all", action="store_true")
-    toucher = sub.add_parser("touch", help="stamp a workstream's updated date and OKF generated datetime")
+    toucher = sub.add_parser("touch", help="stamp a workstream's OKF generated datetime")
     toucher.add_argument("key")
     installer = sub.add_parser("install-skills", help="install rendered skill copies for agents other than Claude Code")
     installer.add_argument("--tool", choices=sorted(SKILL_DIRS), help="install into this tool's own skills folder")

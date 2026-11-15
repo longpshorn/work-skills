@@ -1,7 +1,8 @@
 import pytest
 
+import okf_check
 import work
-from helpers import header
+from helpers import header, stamp
 
 
 def read_raw(path):
@@ -21,7 +22,7 @@ def test_index_adds_type_keeping_bom_crlf_and_comments(store):
                     "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
     assert work.main(["index"]) == 0
     assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: A\r\nstate: active   # idea | active\r\n"
-                              "next: Go\r\nupdated: 2026-10-01\r\n---\r\n# A\r\n")
+                              f"next: Go\r\ngenerated: {stamp('2026-10-01')}\r\n---\r\n# A\r\n")
 
 
 @pytest.mark.parametrize("key", ["ai/01-a", "_archive/ai/01-old"])
@@ -108,7 +109,7 @@ def test_index_marks_an_archived_workstream_deprecated_inserting_one_line(store)
     work.main(["index"])
     assert read_raw(path) == ("\ufeff---\r\ntype: workstream\r\ntitle: Old\r\nstate: done   # finished\r\n"
                               f"status: {work.ARCHIVED_STATUS}\r\n"
-                              "next: None\r\nupdated: 2026-10-01\r\n---\r\n# Old\r\n")
+                              f"next: None\r\ngenerated: {stamp('2026-10-01')}\r\n---\r\n# Old\r\n")
 
 
 def test_index_marks_an_archived_file_without_state_before_the_closing_line(store, write):
@@ -142,3 +143,89 @@ def test_marking_archived_workstreams_is_idempotent(store, write):
     work.main(["index"])
     assert path.read_text(encoding="utf-8") == once
     assert once.count("status:") == 1
+
+
+def test_index_backfills_generated_from_a_lone_updated_in_place_keeping_bom_crlf_and_comments(store):
+    path = store / "ai" / "01-a.md"
+    write_raw(path, "\ufeff---\r\ntype: workstream\r\ntitle: A\r\nstate: active\r\nnext: Go\r\n"
+                    "updated: 2026-09-14   # set by touch\r\nrepos: []\r\n---\r\n# A\r\n")
+    work.main(["index"])
+    text = read_raw(path)
+    assert text == ("\ufeff---\r\ntype: workstream\r\ntitle: A\r\nstate: active\r\nnext: Go\r\n"
+                    f"generated: {stamp('2026-09-14')}   # set by touch\r\nrepos: []\r\n---\r\n# A\r\n")
+    meta = work.parse_header(text)
+    assert str(meta["date"]) == "2026-09-14" and meta["generated"]["by"] == work.ACTOR
+
+
+def test_index_drops_updated_when_generated_is_already_there(store, write):
+    path = write("ai/01-a", header(type="workstream", updated="2026-01-01"))
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == header(type="workstream")
+
+
+def test_backfill_run_twice_is_idempotent(store, write):
+    path = write("_archive/ai/01-old", header(generated=None, updated="2026-09-14", state="done"))
+    write("ai/02-b", header(generated=None, updated="2026-09-15"))
+    work.main(["index"])
+    once = path.read_text(encoding="utf-8")
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == once
+    assert "updated" not in once and once.count("generated:") == 1
+
+
+def test_a_store_with_only_updated_headers_conforms_after_one_index_run(store, write):
+    write("README", "---\ntype: guide\n---\n")
+    write("ai/01-a", header(generated=None, updated="2026-09-14"))
+    write("_archive/ai/02-old", header(generated=None, updated="2026-01-01", state="done"))
+    assert work.main(["--today", "2026-10-05", "index"]) == 0
+    assert okf_check.problems(store) == []
+    assert "2026-09-14 (21d)" in (store / "index.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("generated", ["{ by: human:x }", "", "{ by: human:x, at: 2026-10-01 }"])
+def test_index_keeps_updated_when_generated_has_no_usable_at(store, write, generated):
+    path = write("ai/01-a", header(type="workstream", updated="2026-09-14", generated=generated))
+    before = path.read_text(encoding="utf-8")
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("day", ["0001-01-01", "9999-12-31"])
+def test_index_keeps_working_with_an_updated_date_at_the_calendar_edge(store, write, day):
+    path = write("ai/01-a", header(type="workstream", generated=None, updated=day))
+    assert work.main(["index"]) == 0
+    assert str(work.parse_header(path.read_text(encoding="utf-8"))["date"]) == day
+
+
+def test_index_drops_updated_next_to_a_quoted_generated(store, write):
+    quoted = f'"{stamp("2026-10-01")}"'
+    path = write("ai/01-a", header(type="workstream", generated=quoted, updated="2026-09-14"))
+    work.main(["index"])
+    assert path.read_text(encoding="utf-8") == header(type="workstream", generated=quoted)
+
+
+LEGACY = "---\ntitle: T\nstatus: active\nnext: N\nupdated: 2026-10-01\n---\n"
+
+
+@pytest.mark.parametrize("legacy", ["ai/01-old", "_archive/ai/01-old"])
+def test_index_leaves_every_updated_alone_while_the_store_predates_okf(store, write, legacy):
+    """The release the upgrade hint names requires updated, so index must not retire it until that run."""
+    old = write(legacy, LEGACY)
+    ok = write("ai/02-ok", header(generated=None, updated="2026-10-02"))
+    both = write("ai/03-both", header(updated="2026-10-03"))
+    assert work.main(["index"]) == 1
+    assert "\nupdated: 2026-10-01\n" in old.read_text(encoding="utf-8")
+    assert "\nupdated: 2026-10-02\n" in ok.read_text(encoding="utf-8")
+    assert "generated" not in ok.read_text(encoding="utf-8")
+    assert "\nupdated: 2026-10-03\n" in both.read_text(encoding="utf-8")
+
+
+def test_index_retires_updated_once_the_store_is_upgraded(store, write):
+    old = write("ai/01-old", LEGACY)
+    ok = write("ai/02-ok", header(generated=None, updated="2026-10-02"))
+    assert work.main(["index"]) == 1
+    old.write_text(LEGACY.replace("status:", "state:"), encoding="utf-8")  # what the upgrade release does
+    assert work.main(["index"]) == 0
+    for path, day in ((old, "2026-10-01"), (ok, "2026-10-02")):
+        text = path.read_text(encoding="utf-8")
+        assert "updated" not in text and f"generated: {stamp(day)}" in text

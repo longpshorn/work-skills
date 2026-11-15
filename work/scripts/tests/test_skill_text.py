@@ -50,3 +50,21 @@ def test_standup_offers_missing_descriptions_with_approval():
                  'commit -m "standup: describe', "nothing is written"):
         assert part in step, part
     assert "work-tools touch" not in step, "touch would reset a stale workstream's age"
+
+
+def test_new_checks_for_a_pre_okf_store_before_writing_anything():
+    """touch refuses a pre-OKF store, so a workstream written there would have no date at all."""
+    lines = (SKILLS / "new" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    write = next(i for i, line in enumerate(lines) if line.startswith("5. **Write"))
+    check = next(i for i, line in enumerate(lines) if "predates the OKF format" in line)
+    assert check < write
+    for part in ("work-tools index", "upgrade hint", "stop without creating the workstream"):
+        assert part in lines[check], part
+
+
+def test_checkpoint_says_what_to_do_when_the_store_predates_okf():
+    step = next(line for line in (SKILLS / "checkpoint" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+                if line.startswith("3. "))
+    for part in ("predates the OKF format", "upgrade hint", "rather than editing headers by hand",
+                 "still commit", "once the store is upgraded"):
+        assert part in step, part

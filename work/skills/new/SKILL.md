@@ -7,7 +7,7 @@ description: Start tracking a new workstream in the user's work store. Use for "
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
-1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning (a missing git identity, or git's own commit error).
+1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning (a missing git identity, or git's own commit error). Otherwise run `work-tools index`; if it reports that the store predates the OKF format, pass its upgrade hint to the user and stop without creating the workstream until the store is upgraded, since `touch` can't date a new workstream there.
 2. **Parse `<area>/<name>`.** Both parts are lower-kebab-case; ask for whatever is missing.
 3. **New area?** If `<store>/<area>/` does not exist, ask for a one-line purpose and write `<area>/AREA.md`:
 
@@ -51,7 +51,7 @@ Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` be
    - <today> · started tracking
    ```
 
-6. Run `work-tools touch <area>/NN-<name>`, which writes the `updated` date and the OKF `generated` stamp. Then run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
+6. Run `work-tools touch <area>/NN-<name>`, which writes the OKF `generated` stamp. Then run `work-tools index` (it must exit 0; it adds each new file's OKF `type` from `TYPES` in `work.py`, so the templates above leave it out), then commit in the store: `git -C "<store>" add -A && git -C "<store>" commit -m "new: <area>/NN-<name>"`. The store's only branch is `log` (never `main`); that is expected.
 7. Confirm with the file path and `/work:resume <name>`.
 
 Only Claude Code gets a post-compaction reminder to checkpoint. In any other agent, run `/work:checkpoint` after each milestone and before your context fills.

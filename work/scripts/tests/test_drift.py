@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 import work
-from helpers import header
+from helpers import header, stamp
 
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
@@ -85,12 +85,12 @@ def test_vm_root_when_set_is_not_touched(store, write, tmp_path, capsys, monkeyp
     assert expected in drift(capsys, "p/01-a")[1]
 
 
-def test_linked_files_changed_after_updated(store, write, tmp_path, capsys):
+def test_linked_files_changed_after_the_last_stamp(store, write, tmp_path, capsys):
     old, new = tmp_path / "old.md", tmp_path / "new.md"
     for path, day in ((old, dt.datetime(2026, 9, 30)), (new, dt.datetime(2026, 10, 3))):
         path.write_text("x")
         os.utime(path, (day.timestamp(), day.timestamp()))
-    write("p/01-a", header(updated="2026-10-01") + f"\nSee `{old}` and [new]({new}).\n")
+    write("p/01-a", header(generated=stamp("2026-10-01")) + f"\nSee `{old}` and [new]({new}).\n")
     out = drift(capsys, "p/01-a")[1]
     assert f"  changed since 2026-10-01: {new}\n" in out
     assert str(old) not in out
@@ -114,7 +114,7 @@ def test_linked_directory_with_changed_file(store, write, tmp_path, capsys):
     (folder / "x.md").write_text("x")
     day = dt.datetime(2026, 10, 3).timestamp()
     os.utime(folder / "x.md", (day, day))
-    write("p/01-a", header(updated="2026-10-01") + f"\nSee `{folder}/`.\n")
+    write("p/01-a", header(generated=stamp("2026-10-01")) + f"\nSee `{folder}/`.\n")
     assert f"  changed since 2026-10-01: {folder}/\n" in drift(capsys, "p/01-a")[1]
 
 
