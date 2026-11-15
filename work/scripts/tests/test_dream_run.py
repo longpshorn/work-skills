@@ -66,7 +66,7 @@ print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "re
 
 
 def git(repo, *args):
-    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, encoding="utf-8")
     assert done.returncode == 0, done.stderr
     return done.stdout.strip()
 

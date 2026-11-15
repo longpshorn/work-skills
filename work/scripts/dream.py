@@ -306,9 +306,10 @@ def repo_of(cwd):
     if not cwd or not os.path.isdir(cwd):
         return None
     try:
+        # Git writes UTF-8; the path is parsed, so decode strictly and treat output that isn't UTF-8 as no repo.
         done = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir"], capture_output=True,
-                              text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+                              encoding="utf-8", errors="strict", timeout=30)
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     out = done.stdout.strip()
     if done.returncode != 0 or not out:
@@ -1014,8 +1015,17 @@ def _git(memory_dir, args, check=True, env=None):
     return done
 
 
+def _utf8(data, what):
+    """Decode a tool's output that is parsed: git, gh and glab write UTF-8, and a replaced byte would corrupt a path,
+    ref or value, so output that is not UTF-8 is a ConfigError, never guessed at."""
+    try:
+        return _decode(data, "%s output" % what)
+    except ValueError as exc:
+        raise ConfigError(str(exc))
+
+
 def _out(memory_dir, args):
-    return _git(memory_dir, args).stdout.decode("utf-8", "replace").strip()
+    return _utf8(_git(memory_dir, args).stdout, "git %s" % args[0]).strip()
 
 
 def _require_repo(memory_dir):
@@ -1024,7 +1034,7 @@ def _require_repo(memory_dir):
     top = _git(memory_dir, ["rev-parse", "--show-toplevel"], check=False) if memory_dir.is_dir() else None
     if top is None or top.returncode != 0:
         raise ConfigError(INSTALL_HINT)
-    root = top.stdout.decode("utf-8", "replace").strip()
+    root = _utf8(top.stdout, "git rev-parse").strip()
     if not root or not os.path.samefile(root, str(memory_dir)):
         raise ConfigError(INSTALL_HINT)
     if _git(memory_dir, ["rev-parse", "--verify", "-q", "HEAD"], check=False).returncode != 0:
@@ -1111,7 +1121,7 @@ def changes_since(memory_dir, rev):
     _require_repo(memory_dir)
     _git(memory_dir, ["add", "-A", "-N"])
     raw = _git(memory_dir, ["diff", "--name-status", "-z", "-M", "--end-of-options", rev]).stdout
-    fields = raw.decode("utf-8", "replace").split("\0")
+    fields = _utf8(raw, "git diff").split("\0")
     changes = {"added": [], "updated": [], "retired": []}
     i = 0
     while i < len(fields) and fields[i]:
@@ -1195,7 +1205,7 @@ def _forge(args, cwd):
         raise ConfigError("%s failed: %s" % (args[0], exc))
     if done.returncode != 0:
         raise ConfigError("%s failed: %s" % (" ".join(args[:3]), done.stderr.decode("utf-8", "replace").strip()))
-    return done.stdout.decode("utf-8", "replace")
+    return _utf8(done.stdout, args[0])
 
 
 def mr_is_open(forge, number, repo):
@@ -1230,9 +1240,9 @@ def create_mr(forge, repo, branch, base, title, body, reviewers):
 def _default_branch(repo):
     done = _git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], check=False)
     if done.returncode == 0:
-        return done.stdout.decode("utf-8", "replace").strip().split("/", 1)[1]
+        return _utf8(done.stdout, "git symbolic-ref").strip().split("/", 1)[1]
     done = _git(repo, ["ls-remote", "--symref", "origin", "HEAD"], check=False)
-    found = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", done.stdout.decode("utf-8", "replace"), re.MULTILINE)
+    found = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", _utf8(done.stdout, "git ls-remote"), re.MULTILINE)
     if found:
         return found.group(1)
     raise ConfigError("cannot resolve the default branch of origin")
@@ -1877,7 +1887,7 @@ def _branch_tip(repo, state):
     if not record:
         return None
     done = _git(repo, ["rev-parse", "-q", "--verify", "refs/heads/" + record["branch"]], check=False)
-    return (record["branch"], done.stdout.decode("utf-8", "replace").strip() if done.returncode == 0 else None)
+    return (record["branch"], _utf8(done.stdout, "git rev-parse").strip() if done.returncode == 0 else None)
 
 
 def _propose_all(promotions, cfg, today, state, notes):
@@ -2018,7 +2028,7 @@ exec sh "$tools" "$@"
 
 
 def _config_value(memory_dir, args, env=None):
-    return _git(memory_dir, ["config"] + args, check=False, env=env).stdout.decode("utf-8", "replace").strip()
+    return _utf8(_git(memory_dir, ["config"] + args, check=False, env=env).stdout, "git config").strip()
 
 
 def _init_memory(memory_dir, global_md, home):
@@ -2114,8 +2124,11 @@ def dream_install(init_memory, load, launchctl="launchctl", home=None):
 def _load(launchctl, plist):
     target = "gui/%d" % os.getuid()
     try:
-        subprocess.run([launchctl, "bootout", "%s/%s" % (target, INSTALL_LABEL)], capture_output=True, text=True)
-        done = subprocess.run([launchctl, "bootstrap", target, str(plist)], capture_output=True, text=True)
+        # launchctl writes UTF-8 on macOS; its output is only shown, so a bad byte is replaced, not fatal.
+        subprocess.run([launchctl, "bootout", "%s/%s" % (target, INSTALL_LABEL)], capture_output=True,
+                       encoding="utf-8", errors="replace")
+        done = subprocess.run([launchctl, "bootstrap", target, str(plist)], capture_output=True, encoding="utf-8",
+                              errors="replace")
     except OSError as exc:
         print("dream-install: cannot run launchctl: %s" % exc)
         return 1

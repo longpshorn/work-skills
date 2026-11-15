@@ -14,7 +14,7 @@ TODAY = dt.date(2026, 11, 5)
 
 
 def git(repo, *args):
-    done = subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+    done = subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, encoding="utf-8")
     return done.stdout.strip()
 
 

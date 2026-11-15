@@ -39,7 +39,7 @@ CHILD = (
 
 def _hold_in_child():
     scripts = os.path.dirname(os.path.abspath(dream.__file__))
-    child = subprocess.Popen([sys.executable, "-c", CHILD, scripts], stdout=subprocess.PIPE, text=True)
+    child = subprocess.Popen([sys.executable, "-c", CHILD, scripts], stdout=subprocess.PIPE, encoding="utf-8")
     assert child.stdout.readline().strip() == "locked"
     return child
 

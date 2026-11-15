@@ -474,7 +474,7 @@ def test_update_pulls_then_re_renders_with_the_pulled_code(tmp_path):
     _git(upstream, "add", "-A")
     _git(upstream, "commit", "-q", "-m", "extra")
     head = subprocess.run(["git", "-C", str(upstream), "rev-parse", "HEAD"], capture_output=True,
-                          text=True).stdout.strip()
+                          encoding="utf-8").stdout.strip()
     done = _tools(root, "install-skills", "--update", "--dest", dest)
     assert done.returncode == 0, done.stderr
     result = json.loads(done.stdout)

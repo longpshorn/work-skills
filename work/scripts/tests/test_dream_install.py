@@ -37,7 +37,7 @@ def install(env, init_memory=False, load=False):
 
 
 def git(path, *args):
-    return subprocess.run(["git", "-C", str(path)] + list(args), capture_output=True, text=True,
+    return subprocess.run(["git", "-C", str(path)] + list(args), capture_output=True, encoding="utf-8",
                           env=dict(os.environ, HOME=os.environ["HOME"])).stdout.strip()
 
 
@@ -99,8 +99,8 @@ def _plugin_copy(env, name, mtime):
 
 
 def _run_launcher(env, *args):
-    done = subprocess.run(["sh", str(env.state / "launcher.sh")] + list(args), capture_output=True, text=True,
-                          env=dict(os.environ, HOME=str(env.home)))
+    done = subprocess.run(["sh", str(env.state / "launcher.sh")] + list(args), capture_output=True,
+                          encoding="utf-8", env=dict(os.environ, HOME=str(env.home)))
     return done.stdout.strip()
 
 

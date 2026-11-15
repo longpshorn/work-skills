@@ -20,7 +20,7 @@ def fresh(tmp_path, monkeypatch):
 
 
 def git_out(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, encoding="utf-8").stdout.strip()
 
 
 def init(capsys):
