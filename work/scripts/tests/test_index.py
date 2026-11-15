@@ -109,33 +109,17 @@ def names(root):
     return sorted(p.name for p in root.iterdir() if p.name.lower() == "index.md")
 
 
-def test_index_renames_a_tracked_legacy_index_in_git(store, write):
-    write("ai/01-b", header())
+def test_index_refuses_a_legacy_INDEX_md_and_writes_nothing(store, write, capsys):
+    path = write("ai/01-b", header())
     (store / "INDEX.md").write_text("old\n", encoding="utf-8")
-    git(store, "init", "-q")
-    git(store, "add", "-A")
-    assert work.main(["index"]) == 0
-    assert names(store) == ["index.md"]
-    git(store, "add", "-A")
-    tracked = git(store, "ls-files").split()
-    assert "index.md" in tracked and "INDEX.md" not in tracked
-
-
-def test_index_renames_an_untracked_legacy_index(store, write):
-    write("ai/01-b", header())
-    (store / "INDEX.md").write_text("old\n", encoding="utf-8")
-    assert work.main(["index"]) == 0
-    assert names(store) == ["index.md"]
-    assert "* [T](ai/01-b.md)" in (store / "index.md").read_text(encoding="utf-8")
-
-
-def test_index_drops_a_legacy_index_beside_a_new_one(store, write):
-    (store / "index.md").write_text("new\n", encoding="utf-8")
-    (store / "INDEX.md").write_text("old\n", encoding="utf-8")
-    if names(store) != ["INDEX.md", "index.md"]:
-        pytest.skip("case-insensitive file system: the two names are one file")
-    assert work.main(["index"]) == 0
-    assert names(store) == ["index.md"]
+    before = path.read_text(encoding="utf-8")
+    assert work.main(["index"]) == 1
+    err = capsys.readouterr().err
+    assert "INDEX.md" in err and "work-tools index" in err and "54fbc56" in err
+    assert names(store) == ["INDEX.md"]
+    assert (store / "INDEX.md").read_text(encoding="utf-8") == "old\n"
+    assert path.read_text(encoding="utf-8") == before
+    assert not (store / "log.md").exists()
 
 
 def test_index_entry_leads_with_the_description_when_there_is_one(store, write):

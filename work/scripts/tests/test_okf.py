@@ -100,14 +100,13 @@ def test_a_workstream_archived_by_the_wrap_skill_is_deprecated_and_conforms(fres
     assert okf_check.problems(fresh) == []
 
 
-def test_a_store_from_before_okf_conforms_after_one_index_run(store):
+def test_a_store_without_types_descriptions_or_archived_status_conforms_after_one_index_run(store):
     build(store, {
         "README.md": "# Work store\n",
-        "INDEX.md": "# Work Index\n\n| Workstream | Status |\n|---|---|\n",
         "garden/AREA.md": "# Garden\n\n**Purpose:** grow\n",
-        "garden/01-plant.md": header(state=None, status="active   # idea | active"),
-        "side-work/01-once.md": header(state=None, status="idea", report="false"),
-        "_archive/garden/02-old.md": header(state=None, status="done"),
+        "garden/01-plant.md": header(state="active   # idea | active"),
+        "side-work/01-once.md": header(state="idea", report="false"),
+        "_archive/garden/02-old.md": header(state="done"),
     })
     assert okf_check.problems(store) != []
     assert work.main(["index"]) == 0
