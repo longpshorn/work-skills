@@ -35,17 +35,38 @@ def _is_none(node):
     return isinstance(node, ast.Constant) and node.value is None
 
 
+def _subprocess_names(tree):
+    """The names the module binds subprocess to (`import subprocess [as x]`) and the functions it imports from it
+    (`from subprocess import run [as r]`, mapped to their real name)."""
+    modules, functions = {"subprocess"}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(a.asname for a in node.names if a.name == "subprocess" and a.asname)
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            functions.update((a.asname or a.name, a.name) for a in node.names)
+    return modules, functions
+
+
+def _called(func, modules, functions):
+    """The subprocess function a call's target names, or None."""
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in modules:
+        return func.attr
+    if isinstance(func, ast.Name):
+        return functions.get(func.id)
+    return None
+
+
 def unnamed_encodings(source, filename="<src>"):
     """Line numbers of subprocess calls that decode text with the locale encoding."""
+    tree = ast.parse(source, filename)
+    modules, functions = _subprocess_names(tree)
     found = []
-    for node in ast.walk(ast.parse(source, filename)):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"):
-            continue
-        if node.func.attr in LOCALE_ONLY:
+    for node in ast.walk(tree):
+        name = _called(node.func, modules, functions) if isinstance(node, ast.Call) else None
+        if name in LOCALE_ONLY:
             found.append(node.lineno)
             continue
-        if node.func.attr not in CALLS:
+        if name not in CALLS:
             continue
         kwargs = {k.arg: k.value for k in node.keywords if k.arg}
         spread = any(k.arg is None for k in node.keywords)
@@ -54,7 +75,7 @@ def unnamed_encodings(source, filename="<src>"):
         named = "encoding" in kwargs and not _is_none(kwargs["encoding"])
         if (text or spread) and not named:
             found.append(node.lineno)
-    return found
+    return sorted(found)
 
 
 def test_the_rule_flags_locale_decoding_and_passes_named_or_bytes_mode():
@@ -73,6 +94,20 @@ def test_the_rule_flags_locale_decoding_and_passes_named_or_bytes_mode():
         subprocess.run(a, encoding="utf-8", **kw)
         """)
     assert unnamed_encodings(src) == [2, 3, 4, 5, 6, 7]
+
+
+def test_the_rule_follows_aliases_and_names_imported_from_subprocess():
+    src = textwrap.dedent("""\
+        import subprocess as sp
+        from subprocess import run, Popen as P, getoutput
+        sp.run(a, text=True)
+        run(a, text=True)
+        P(a, universal_newlines=True)
+        getoutput("x")
+        run(a, encoding="utf-8")
+        sp.check_output(a)
+        """)
+    assert unnamed_encodings(src) == [3, 4, 5, 6]
 
 
 def test_every_text_mode_subprocess_call_names_its_encoding():
@@ -156,3 +191,13 @@ def test_repo_of_is_none_when_git_prints_a_path_that_is_not_utf8(tmp_path):
     subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", str(tree)], check=True, capture_output=True)
     assert dream.repo_of(str(tree)) is None
     assert dream.repo_of(str(main)) == str(main)
+
+
+@LINUX_ONLY
+def test_drift_ignores_non_utf8_stderr_from_git(tmp_path, store, write, capsys):
+    repo = tmp_path / "repo"
+    git(tmp_path, "init", "-q", "-b", LATIN1_NAME, str(repo))  # no upstream: git names the branch on stderr
+    git(repo, "commit", "-q", "--allow-empty", "-m", "a")
+    write("p/01-a", header(repos=f"[{repo}]"))
+    assert work.main(["drift", "p/01-a"]) == 0
+    assert capsys.readouterr().out == "p/01-a\n  clean\n"

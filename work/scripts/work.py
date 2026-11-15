@@ -620,9 +620,10 @@ def vm_root():
 
 
 def git(repo, *args):
-    # Git writes UTF-8 whatever the locale says (cp1252 on Windows); callers parse this, so decode strictly.
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, encoding="utf-8",
-                            errors="strict", timeout=GIT_TIMEOUT)
+    # Git writes UTF-8 whatever the locale says (cp1252 on Windows); callers parse stdout, so decode it strictly.
+    # Stderr is never used, so it is dropped rather than decoded: a non-UTF-8 byte there must not fail the call.
+    result = subprocess.run(["git", "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            encoding="utf-8", errors="strict", timeout=GIT_TIMEOUT)
     return result.returncode, result.stdout
 
 
