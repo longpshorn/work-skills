@@ -50,7 +50,7 @@ def test_standup_offers_missing_descriptions_with_approval():
                  'commit -m "standup: describe', "nothing is written"):
         assert part in step, part
     assert "work-tools touch" not in step, "touch would reset a stale workstream's age"
-    assert "stderr" in step and "list them again" in step, "a bad file must be listed once"
+    assert "work-tools list --no-description 2>/dev/null" in step, "a bad file must be listed once"
 
 
 def test_new_checks_for_a_pre_okf_store_before_writing_anything():
