@@ -7,7 +7,7 @@ description: Save this session's progress on a tracked workstream to the user's 
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
-1. **Which workstream?** Use the one `/work:resume` loaded. Otherwise, match the session's work with `work-tools find`. If the session touched several workstreams, ask which (multi-select; checkpoint each one). If none is tracked, offer `/work:new`.
+1. **Which workstream?** Use the one `/work:resume` loaded. Otherwise, match the session's work with `work-tools find`. If the session touched several workstreams, ask which (multi-select; checkpoint each one). If none is tracked, offer `/work:new`, unless `find`'s stderr says a file matches "but its header can't be read": then show that file's error and offer to fix the header first. Other stderr lines (`<path>: <message>`) are header errors in other status files; mention them in one line and carry on.
 2. **Update the status file** with Edit (never rewrite the whole file):
    - **Log:** append to `## Log`, one line per decision or result: `- YYYY-MM-DD · <what was decided, built or found, with paths/URLs>`. Facts only; mark anything unverified as such.
    - **Header:** set `state` and `next`. Add any new artifact URLs to `artifacts`. If there is no `description`, add one after `title`: one sentence on what the workstream delivers, taken from its ask; otherwise change it only when it is now wrong. Leave `generated` to the next step.
