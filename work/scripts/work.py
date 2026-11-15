@@ -711,6 +711,7 @@ PAST_TEMPLATES = frozenset({
     "145b2db6d1367378916a3357f9a86d0cbf4ab495ddb4a7b4e79be0be7ce8fdfa",  # a4b28b4 dream run
     "f616ac506040241b9f4a541945d30cb0c29a8a8ae1f5ce8a05b7ea07e4c9d0f4",  # c822e7b #28
     "37475cf81f2d42d263986e90407e5be336cab97a9a87b66ac22d6145b304e092",  # 4d0e05b #25
+    "256b99d93f026c5a6db5d37c49d4142dba569eacbe0bffcf216aea9768c7b68c",  # 231e89a #27
 })
 README_KEPT = "work-tools-readme-kept"  # in the store's .git: the edited README (and TEMPLATE) index last said it kept
 
