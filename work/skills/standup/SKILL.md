@@ -1,13 +1,13 @@
 ---
 name: standup
-description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from regenerating index.md and log.md and, when the user approves, adding missing workstream descriptions.
+description: Cross-workstream status view from the user's work store. Use for "/work:standup", "what's on my plate", "what's stale", "status of everything", or weekly planning. Read-only apart from what work-tools index regenerates or upgrades (index.md, log.md, missing OKF fields, an unedited store README) and, when the user approves, adding missing workstream descriptions.
 ---
 
 # Standup: every workstream at a glance
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
-1. Run `work-tools index`. Exit 1 means some status files have header errors; list them first and offer to fix them. Exit 4 means there is no work store yet; say so, offer `/work:new`, and stop.
+1. Run `work-tools index`. Exit 1 means some status files have header errors; list them first and offer to fix them. A stderr line `README.md: ...` that says it "differs from the plugin's store README template" is a notice, not a header error: index kept the user's edited store README and says so only once, so mention it in one line. Exit 4 means there is no work store yet; say so, offer `/work:new`, and stop.
 2. Read `<store>/index.md` and run `work-tools drift --all 2>/dev/null` (its stderr repeats the header errors step 1 already listed). Also run `work-tools dream-status`; it prints one line only when the nightly dream run is failing or stale.
 3. Print these sections, leaving out any that are empty:
    - **Blocked:** workstream · next

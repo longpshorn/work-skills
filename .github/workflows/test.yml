@@ -15,6 +15,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: test_readme_refresh checks PAST_TEMPLATES against every past store README template.
+          fetch-depth: 0
       # Python 3.9, the helper's floor, from uv on every OS; the activated venv puts it first on PATH.
       - uses: astral-sh/setup-uv@v10.3.3
         with:

@@ -7,7 +7,7 @@ description: Start tracking a new workstream in the user's work store. Use for "
 
 Helper: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/work-tools"`, written `work-tools` below. `work-tools root` prints the store's folder, written `<store>` below.
 
-1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning (a missing git identity, or git's own commit error). Otherwise run `work-tools index`; if it reports that the store predates the OKF format, pass its upgrade hint to the user and stop without creating the workstream until the store is upgraded, since `touch` can't date a new workstream there.
+1. **Store.** If `<store>` doesn't exist, run `work-tools init` and pass on what it printed, including any "not committed" warning (a missing git identity, or git's own commit error). Otherwise run `work-tools index`; if it reports that the store predates the OKF format, pass its upgrade hint to the user and stop without creating the workstream until the store is upgraded, since `touch` can't date a new workstream there. A stderr line `README.md: ...` that says it "differs from the plugin's store README template" is a notice, not an error: index kept the user's edited store README and says so only once, so pass it on to the user in one line.
 2. **Parse `<area>/<name>`.** Both parts are lower-kebab-case; ask for whatever is missing.
 3. **New area?** If `<store>/<area>/` does not exist, ask for a one-line purpose and write `<area>/AREA.md`:
 

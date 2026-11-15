@@ -5,6 +5,7 @@ Store layout and header rules: the store's README.md. The store is WORK_STORE, o
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -462,22 +463,65 @@ def legacy_files(root):
     return found
 
 
+def readme_fingerprint(text):
+    """The sha256 of a store README's TEXT, ignoring a BOM, CR line endings and what index itself adds
+    (the OKF type, and a front-matter block for a copy from before #19)."""
+    text = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(upgraded(text, "README.md").encode("utf-8")).hexdigest()
+
+
+def refresh_readme(root):
+    """Replace the store's README.md with the current TEMPLATE when it is an unedited copy of a past
+    version (keeping its BOM and line endings). An edited one is kept; returns (path, notice) the first
+    time index sees that README with this TEMPLATE (every time in a store without a .git folder, which has
+    nowhere to remember it), else None. A non-UTF-8 README raises NotUtf8Error."""
+    path = root / "README.md"
+    text = read_store_text(path, newline="")
+    template = TEMPLATE.read_text(encoding="utf-8")
+    found, current = readme_fingerprint(text), readme_fingerprint(template)
+    if found == current:
+        return None
+    if found in PAST_TEMPLATES:
+        bom = "\ufeff" if text.startswith("\ufeff") else ""
+        newline = "\r\n" if text.lstrip("\ufeff").split("\n", 1)[0].endswith("\r") else "\n"
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(bom + template.replace("\n", newline))
+        return None
+    seen = f"{found} {current}\n"
+    marker = root / ".git" / README_KEPT_MARKER
+    try:
+        if marker.read_text(encoding="utf-8") == seen:
+            return None
+    except (OSError, UnicodeDecodeError):
+        pass
+    if marker.parent.is_dir():
+        try:
+            marker.write_text(seen, encoding="utf-8")
+        except OSError:
+            pass
+    return path, f"{README_KEPT_NOTICE}, so index kept it as it is; compare it with {TEMPLATE} and merge by hand"
+
+
 def upgrade_store(root):
-    """Give every store file its OKF type, and archived workstreams their status, with no migration needed.
-    While any workstream predates the OKF format, updated stays: the release that upgrades it needs it.
-    A file that is not UTF-8 is left alone. Returns (path, error) for each such README.md or AREA.md;
-    load_store reports status files."""
+    """Refresh an unedited past copy of the store README, give every store file its OKF type, and archived
+    workstreams their status, with no migration needed. While any workstream predates the OKF format,
+    updated stays: the release that upgrades it needs it. A file that is not UTF-8 is left alone.
+    Returns (errors, notices): (path, error) for each such README.md or AREA.md (load_store reports status
+    files), and (path, notice) for an edited README kept as it is."""
     files = [(root / "README.md", "README.md", False)] if (root / "README.md").is_file() else []
     files += list(store_files(root))
     retire_updated = not legacy_files(root)
-    errors = []
+    errors, notices = [], []
     for path, kind, archived in files:
         try:
+            if kind == "README.md":
+                notice = refresh_readme(root)
+                notices += [notice] if notice else []
             upgrade_file(path, kind, archived, retire_updated)
         except NotUtf8Error as e:
             if kind != "status file":
                 errors.append((path, e))
-    return errors
+    return errors, notices
 
 
 def report_errors(root, errors):
@@ -491,7 +535,8 @@ def cmd_index(root, args):
     if legacy:
         print(f"{legacy[0]}: legacy index file: {LEGACY_UPGRADE}", file=sys.stderr)
         return 1
-    upgrade_errors = upgrade_store(root)
+    upgrade_errors, notices = upgrade_store(root)
+    report_errors(root, notices)
     items, errors = load_store(root)
     errors = upgrade_errors + errors
     archived, archived_errors = load_store(root / "_archive") if (root / "_archive").is_dir() else ([], [])
@@ -654,6 +699,22 @@ def cmd_drift(root, args):
 
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "store-README.md"
+# readme_fingerprint of every past committed version of TEMPLATE, by the commit that wrote it: an unedited
+# copy index replaces with the current one. When TEMPLATE changes, add the version it replaces;
+# test_readme_refresh checks this against the template's git history.
+PAST_TEMPLATES = frozenset({
+    "68f68f8728dc683ab4ed757095b45856282ee4216241c7bb9f580289c019d772",  # 374edee portable work skills
+    "1d3010b9c34a56b9f5b0edd3aaac55e83acfa75576158c9afa207b314a269f95",  # be31d22 #19
+    "aedb0cb3b360162891d857343cefc394cc7d6f026c3d8920f90d1f62d83630f1",  # 3af17b1 #22
+    "214aae125445ba8f6053311dd7acfc5ca0f0e9c6123e750fe533be2f00784a69",  # 7d75bb3 #23
+    "3ca1711adef95e810538b6e9d9b2085e27b96860b7e0fd838fab7e46e1cc6786",  # 17f6498 #24
+    "145b2db6d1367378916a3357f9a86d0cbf4ab495ddb4a7b4e79be0be7ce8fdfa",  # a4b28b4 dream run
+    "f616ac506040241b9f4a541945d30cb0c29a8a8ae1f5ce8a05b7ea07e4c9d0f4",  # c822e7b #28
+    "37475cf81f2d42d263986e90407e5be336cab97a9a87b66ac22d6145b304e092",  # 4d0e05b #25
+    "256b99d93f026c5a6db5d37c49d4142dba569eacbe0bffcf216aea9768c7b68c",  # 231e89a #27
+})
+README_KEPT_MARKER = "work-tools-readme-kept"  # in the store's .git: the edited README (and TEMPLATE) index last said it kept
+README_KEPT_NOTICE = "differs from the plugin's store README template"  # how index names a kept README; skills quote it
 
 
 def enclosing_repo(path):

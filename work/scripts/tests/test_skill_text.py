@@ -91,3 +91,13 @@ def test_find_and_drift_stderr_header_errors_are_not_loose_ends():
     assert "already mentioned" in skill_line("resume", "work-tools drift <area>/<slug>")
     assert "not loose ends" in skill_line("wrap", "work-tools drift <key>")
     assert "exit code" in skill_line("wrap", "work-tools find <q>")
+
+
+def test_skills_that_run_index_quote_its_readme_kept_notice():
+    """index says once that it kept an edited store README with work.README_KEPT_NOTICE; every skill whose
+    first index run can print it must quote it, so the notice reaches the user and isn't fixed as an error."""
+    for skill, marker in (("checkpoint", "Run `work-tools touch"), ("standup", "1. Run `work-tools index`"),
+                          ("new", "1. **Store.**")):
+        line = skill_line(skill, marker)
+        assert f'"{work.README_KEPT_NOTICE}"' in line, skill
+        assert "not an error" in line or "not a header error" in line, skill
