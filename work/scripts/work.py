@@ -510,14 +510,21 @@ def find(items, query=None, cwd=None):
         area = [w for w in items if w.area.lower() == q]
         if area:
             return area
-        return [w for w in items if q in w.slug.lower() or q in w.meta["title"].lower()]
+        return [w for w in items if q in w.slug.lower() or q in w.meta.get("title", "").lower()]
     here = abspath(cwd)
     return [w for w in items
-            if any(r == here or r in here.parents for r in map(abspath, w.meta["repos"]))]
+            if any(r == here or r in here.parents for r in map(abspath, w.meta.get("repos", [])))]
+
+
+def unreadable(errors):
+    """The files load_store could not read, as Workstreams with no header, so find and drift can
+    match them by key, slug or name and say why a match is missing."""
+    return [Workstream(path.parent.name, path, {}) for path, _ in errors]
 
 
 def cmd_find(root, args):
-    items, _ = load_store(root)
+    items, errors = load_store(root)
+    report_errors(root, errors)
     cwd = args.cwd or os.getcwd()
     hits = find(items, args.query, None if args.query else cwd)
     if len(hits) == 1:
@@ -526,7 +533,11 @@ def cmd_find(root, args):
     if hits:
         print("\n".join(w.key for w in hits))
         return 2
-    print(f"work.py: no workstream matches {args.query or cwd!r}", file=sys.stderr)
+    message = f"work.py: no workstream matches {args.query or cwd!r}"
+    for w in find(unreadable(errors), args.query) if args.query else []:
+        message += (f"; {w.path.relative_to(root).as_posix()} matches it "
+                    "but its header can't be read (error above)")
+    print(message, file=sys.stderr)
     return 3
 
 
@@ -600,10 +611,16 @@ def drift_lines(w):
 
 
 def cmd_drift(root, args):
-    items, _ = load_store(root)
+    items, errors = load_store(root)
+    report_errors(root, errors)
     targets = items if args.all else [w for w in items if w.key == args.key]
     if not targets and not args.all:
-        print(f"work.py: no workstream {args.key!r}", file=sys.stderr)
+        message = f"work.py: no workstream {args.key!r}"
+        for w in unreadable(errors):
+            if w.key == args.key:
+                message += (f"; {w.path.relative_to(root).as_posix()} has that key "
+                            "but its header can't be read (error above)")
+        print(message, file=sys.stderr)
         return 3
     for w in targets:
         lines = drift_lines(w)
