@@ -1,13 +1,11 @@
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
 import work
 from helpers import header
 
-TEMPLATE = Path(work.__file__).resolve().parents[1] / "templates" / "store-README.md"
 IDENTITY = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -37,7 +35,7 @@ def test_init_creates_store_on_log_branch(fresh, monkeypatch, capsys):
     assert rc == 0 and out.out.strip() == str(fresh)
     assert git_out(fresh, "branch", "--show-current") == "log"
     assert git_out(fresh, "remote") == ""
-    assert (fresh / "README.md").read_text(encoding="utf-8") == TEMPLATE.read_text(encoding="utf-8")
+    assert (fresh / "README.md").read_text(encoding="utf-8") == work.TEMPLATE.read_text(encoding="utf-8")
     assert git_out(fresh, "log", "--format=%s") == "init: work store"
 
 
