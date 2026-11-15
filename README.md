@@ -195,10 +195,10 @@ Your `python` may be newer than 3.9, so run the tests under 3.9 too before you p
 uv run --no-project -p 3.9 --with pytest python -m pytest work/scripts/tests -q
 ```
 
-On a Mac, to skip the download, point uv at the Command Line Tools Python (`/usr/bin/python3`), which is 3.9 there:
+On a Mac, to skip the download, point `-p` at the Command Line Tools Python instead. It is 3.9 on current macOS; check with `/usr/bin/python3 --version`, since a newer one no longer tests the floor:
 
 ```sh
-uv run --no-project --python /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
+uv run --no-project -p /usr/bin/python3 --with pytest python -m pytest work/scripts/tests -q
 ```
 
 To see which version ran, leave off `-q`: pytest's first line names it (`platform ... -- Python 3.9.x`).
