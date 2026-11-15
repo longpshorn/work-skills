@@ -32,7 +32,7 @@ Rules: lists are `[a, b]`; an inline comment needs two or more spaces before `#`
 
 ## Open Knowledge Format
 
-The store is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.2 bundle, so any OKF tool can read it. Every `.md` file other than `index.md` and `log.md` needs YAML front-matter with a `type`. `work-tools index` adds a missing `type` (`workstream`, `area` or `guide`, from `TYPES` in the plugin's `work.py`) and renames a `status` key that holds a work state to `state`. Any other Markdown file you add needs its own `type`.
+The store is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.2 bundle, so any OKF tool can read it. Every `.md` file other than `index.md` and `log.md` needs YAML front-matter with a `type`. `work-tools index` adds a missing `type` (`workstream`, `area` or `guide`, from `TYPES` in the plugin's `work.py`). Any other Markdown file you add needs its own `type`.
 
 How the header maps to OKF:
 
