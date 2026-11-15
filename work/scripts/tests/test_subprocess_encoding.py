@@ -165,28 +165,31 @@ def test_drift_names_a_repo_whose_git_output_is_not_utf8(tmp_path, store, write,
     repo = tmp_path / "repo"
     git(tmp_path, "init", "-q", str(repo))
     git(repo, "config", "core.quotepath", "false")
-    (repo / os.fsdecode(b"caf\xe9.txt")).write_text("x", encoding="utf-8")  # a Latin-1 name
+    (repo / latin1_name(".txt")).write_text("x", encoding="utf-8")  # a Latin-1 name
     write("p/01-a", header(repos=f"[{repo}]"))
     assert work.main(["drift", "p/01-a"]) == 0
     assert capsys.readouterr().out == f"p/01-a\n  {repo}: git printed non-UTF-8 output\n"
 
 
 LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux", reason="only Linux file systems accept a name that is not UTF-8")
-LATIN1_NAME = os.fsdecode(b"caf\xe9")
+def latin1_name(suffix=""):
+    """A file name that is not UTF-8. Built per test: on Windows os.fsdecode is strict, so at import time it would
+    stop the whole module from loading."""
+    return os.fsdecode(b"caf\xe9" + suffix.encode("ascii"))
 
 
 @LINUX_ONLY
 def test_dream_reports_memory_git_output_that_is_not_utf8(tmp_path):
     repo = init_repo(tmp_path / "mem")
     rev = dream._out(repo, ["rev-parse", "HEAD"])
-    (repo / (LATIN1_NAME + ".md")).write_text("x\n", encoding="utf-8")
+    (repo / latin1_name(".md")).write_text("x\n", encoding="utf-8")
     with pytest.raises(dream.ConfigError, match="git diff output is not UTF-8"):
         dream.changes_since(repo, rev)
 
 
 @LINUX_ONLY
 def test_repo_of_is_none_when_git_prints_a_path_that_is_not_utf8(tmp_path):
-    main = init_repo(tmp_path / LATIN1_NAME)
+    main = init_repo(tmp_path / latin1_name())
     tree = tmp_path / "tree"
     subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", str(tree)], check=True, capture_output=True)
     assert dream.repo_of(str(tree)) is None
@@ -196,7 +199,7 @@ def test_repo_of_is_none_when_git_prints_a_path_that_is_not_utf8(tmp_path):
 @LINUX_ONLY
 def test_drift_ignores_non_utf8_stderr_from_git(tmp_path, store, write, capsys):
     repo = tmp_path / "repo"
-    git(tmp_path, "init", "-q", "-b", LATIN1_NAME, str(repo))  # no upstream: git names the branch on stderr
+    git(tmp_path, "init", "-q", "-b", latin1_name(), str(repo))  # no upstream: git names the branch on stderr
     git(repo, "commit", "-q", "--allow-empty", "-m", "a")
     write("p/01-a", header(repos=f"[{repo}]"))
     assert work.main(["drift", "p/01-a"]) == 0
